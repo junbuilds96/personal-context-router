@@ -82,6 +82,34 @@ def test_packet_request_writeback_pipeline(tmp_path: Path):
     assert (tmp_path / "decision.md").exists()
 
 
+def test_extract_signals_skips_redacted_lines_and_section_labels(tmp_path: Path):
+    redacted = tmp_path / "redacted.md"
+    redacted.write_text(
+        "\n".join(
+            [
+                "# Redacted Source",
+                "",
+                "Safety constraints:",
+                "- Contact: [REDACTED]",
+                "- Redact private details before approval.",
+                "",
+                "Agent needs:",
+                "- cli-agent needs command examples.",
+                "- request came from [REDACTED]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    signals = extract_signals(redacted, "unit-test", tmp_path / "signals.md")
+
+    assert "[REDACTED]" not in signals.text
+    assert "- Safety constraints:" not in signals.text
+    assert "- Agent needs:" not in signals.text
+    assert "- Redact private details before approval." in signals.text
+    assert "- cli-agent needs command examples." in signals.text
+
+
 def test_run_sample_creates_complete_demo(tmp_path: Path):
     artifacts = run_sample(tmp_path)
 
@@ -96,7 +124,15 @@ def test_run_sample_creates_complete_demo(tmp_path: Path):
         "06-writeback.md",
     ]
     assert (tmp_path / "07-decision.md").exists()
-    assert "type: context_packet" in (tmp_path / "04-packet.md").read_text(encoding="utf-8")
+    packet = (tmp_path / "04-packet.md").read_text(encoding="utf-8")
+    assert "type: context_packet" in packet
+    assert "[REDACTED]" not in packet
+    assert "- Safety constraints:" not in packet
+    assert "- Agent needs:" not in packet
+    for name in ("02-signals.md", "03-approved.md", "04-packet.md"):
+        generated = (tmp_path / name).read_text(encoding="utf-8")
+        assert "\n        #" not in generated
+        assert "\n        -" not in generated
 
 
 def test_cli_approve_gate_fails_nonzero(tmp_path: Path):

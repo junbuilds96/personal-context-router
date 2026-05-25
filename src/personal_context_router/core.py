@@ -63,7 +63,7 @@ def frontmatter(kind: str, **fields: str) -> str:
 
 
 def document(kind: str, body: str, **fields: str) -> str:
-    return f"{frontmatter(kind, **fields)}\n\n{dedent(body).strip()}\n"
+    return f"{frontmatter(kind, **fields)}\n\n{_document_body(body)}\n"
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
@@ -117,13 +117,15 @@ def extract_signals(redacted_input: str | Path, source: str, output_path: str | 
         safety_note = "Redaction markers present before extraction."
 
     source_body = strip_frontmatter(redacted)
-    goals = _collect_lines(source_body, ("goal", "ship", "build", "need", "mvp", "demo"))
+    goals = _collect_lines(source_body, ("goal", "ship", "build", "mvp", "demo"))
+    constraints_source = _section_text(source_body, ("safety constraints", "constraints"))
     constraints = _collect_lines(
-        source_body,
+        constraints_source or source_body,
         ("safety", "privacy", "redact", "approval", "audit", "local", "scope"),
     )
+    agent_source = _section_text(source_body, ("agent needs", "agent"))
     agent_needs = _collect_lines(
-        source_body,
+        agent_source or source_body,
         ("agent", "packet", "writeback", "request", "cli", "test", "docs"),
     )
     open_questions = _collect_questions(source_body)
@@ -348,6 +350,8 @@ def _collect_lines(text: str, keywords: tuple[str, ...]) -> list[str]:
         normalized = line.strip(" -\t")
         if not normalized or normalized.startswith("#"):
             continue
+        if REDACTION_MARKER in normalized or _is_section_label(normalized):
+            continue
         lowered = normalized.lower()
         if any(keyword in lowered for keyword in keywords):
             lines.append(normalized)
@@ -360,6 +364,23 @@ def _collect_questions(text: str) -> list[str]:
         for line in text.splitlines()
         if "?" in line and line.strip() and not line.lstrip().startswith("#")
     )[:6]
+
+
+def _section_text(text: str, labels: tuple[str, ...]) -> str:
+    lines: list[str] = []
+    in_section = False
+    for line in text.splitlines():
+        normalized = line.strip(" -\t")
+        if _is_section_label(normalized):
+            label = normalized[:-1].strip().lower()
+            in_section = any(label_name in label for label_name in labels)
+            continue
+        if in_section:
+            if not normalized:
+                in_section = False
+                continue
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def _dedupe(items) -> list[str]:
@@ -375,3 +396,30 @@ def _dedupe(items) -> list[str]:
 def _format_bullets(items: list[str], fallback: list[str]) -> str:
     selected = items or fallback
     return "\n".join(f"- {item}" for item in selected)
+
+
+def _document_body(body: str) -> str:
+    """Remove template indentation without shifting interpolated multiline text."""
+    lines = dedent(body).splitlines()
+
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    first_content = next((line for line in lines if line.strip()), "")
+    template_indent = re.match(r"^[ \t]*", first_content).group(0)
+    if template_indent:
+        lines = [
+            line[len(template_indent) :] if line.startswith(template_indent) else line
+            for line in lines
+        ]
+
+    return "\n".join(lines).strip()
+
+
+def _is_section_label(line: str) -> bool:
+    if not line.endswith(":"):
+        return False
+    label = line[:-1].strip()
+    return bool(label) and len(label.split()) <= 4
