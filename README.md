@@ -6,10 +6,24 @@
 
 Stop dumping private notes into every agent.
 
-Personal Context Router is a local-first CLI that turns messy notes, chats, and
-project context into redacted, approved, task-scoped context packets with
-diagnostics and auditable writebacks. It is intentionally small: plain files,
-zero runtime dependencies, no server, no database, and no hidden memory layer.
+For developers and agent users working from messy notes, chats, and project
+context, Personal Context Router is a local-first CLI that produces redacted,
+approved, task-scoped Markdown packets for one agent and one task, with
+diagnostics and auditable writebacks, so you can hand agents useful context
+without shipping raw private notes. It is intentionally small: plain files, zero
+runtime dependencies, no server, no database, and no hidden memory layer.
+
+## Quick Start
+
+```bash
+git clone https://github.com/junbuilds96/personal-context-router.git
+cd personal-context-router
+python -m pip install -e ".[dev]"
+
+PCR_DEMO="$(mktemp -d)"
+pcr run-sample --workdir "$PCR_DEMO"
+pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md"
+```
 
 ```text
 messy note
@@ -46,18 +60,6 @@ Writeback: sufficient, without adding raw private context
 See the full [2-minute demo](docs/DEMO.md), the curated
 [diagnostics report](examples/diagnostics-report.md), and the
 [agent handoff case study](examples/case-study-agent-handoff.md).
-
-## Quickstart
-
-```bash
-git clone https://github.com/junbuilds96/personal-context-router.git
-cd personal-context-router
-python -m pip install -e ".[dev]"
-
-PCR_DEMO="$(mktemp -d)"
-pcr run-sample --workdir "$PCR_DEMO"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md"
-```
 
 You get reviewable Markdown artifacts:
 
@@ -138,6 +140,8 @@ python -m personal_context_router.cli --help
 More detail: [docs/CLI.md](docs/CLI.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
 
 ## Development
+
+CI runs GitHub Actions tests on Python 3.10 through 3.13.
 
 ```bash
 python -m pip install -e ".[dev]"
