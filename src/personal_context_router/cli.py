@@ -8,11 +8,13 @@ import sys
 from . import __version__
 from .core import (
     ApprovalRequired,
+    DiagnosticResult,
     InvalidPipelineInput,
     approve_signals,
     create_packet,
     create_request,
     create_writeback,
+    diagnose_packet,
     extract_signals,
     redact_file,
     run_sample,
@@ -26,7 +28,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
-    subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands = parser.add_subparsers(
+        dest="command",
+        metavar="{redact,extract,approve,packet,inspect,request,writeback,run-sample}",
+        required=True,
+    )
 
     redact = subcommands.add_parser("redact", help="Redact obvious sensitive values from an input note.")
     redact.add_argument("input", metavar="INPUT")
@@ -51,6 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     packet.add_argument("--task", required=True, metavar="TASK")
     packet.add_argument("--out", required=True, metavar="PACKET_OUTPUT")
     packet.set_defaults(func=_cmd_packet)
+
+    inspect = subcommands.add_parser("inspect", help="Validate a context packet and write diagnostics.")
+    _add_diagnose_arguments(inspect)
+
+    diagnose = subcommands.add_parser("diagnose", help=argparse.SUPPRESS)
+    _add_diagnose_arguments(diagnose)
+    _hide_subcommand(subcommands, "diagnose")
+
+    diagnostics = subcommands.add_parser("diagnostics", help=argparse.SUPPRESS)
+    _add_diagnose_arguments(diagnostics)
+    _hide_subcommand(subcommands, "diagnostics")
 
     request = subcommands.add_parser("request", help="Create an auditable context request from a packet.")
     request.add_argument("packet_input", metavar="PACKET_INPUT")
@@ -84,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Wrote demo artifacts:")
         for item in artifact:
             print(f"- {item.path}")
+    elif isinstance(artifact, DiagnosticResult):
+        print(f"Wrote {artifact.artifact.path}")
+        print(f"Diagnostics: {'pass' if artifact.passed else 'fail'}")
+        return 0 if artifact.passed else 1
     else:
         print(f"Wrote {artifact.path}")
     return 0
@@ -103,6 +124,22 @@ def _cmd_approve(args: argparse.Namespace):
 
 def _cmd_packet(args: argparse.Namespace):
     return create_packet(args.approved_input, args.agent, args.task, args.out)
+
+
+def _hide_subcommand(subcommands: argparse._SubParsersAction, name: str) -> None:
+    subcommands._choices_actions = [
+        action for action in subcommands._choices_actions if action.dest != name
+    ]
+
+
+def _add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("packet_input", metavar="PACKET_INPUT")
+    parser.add_argument("--out", required=True, metavar="DIAGNOSTICS_OUTPUT")
+    parser.set_defaults(func=_cmd_diagnose)
+
+
+def _cmd_diagnose(args: argparse.Namespace):
+    return diagnose_packet(args.packet_input, args.out)
 
 
 def _cmd_request(args: argparse.Namespace):

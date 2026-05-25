@@ -22,6 +22,21 @@ SECRET_LINE_RE = re.compile(
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 PHONEISH_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)")
 LONG_HEX_RE = re.compile(r"\b[a-fA-F0-9]{32,}\b")
+SHORT_DIGEST_RE = re.compile(r"^[a-f0-9]{16}$")
+PLACEHOLDER_SCOPE_VALUES = {
+    "*",
+    "all",
+    "any",
+    "everything",
+    "n/a",
+    "none",
+    "tbd",
+    "todo",
+    "unknown",
+    "unknown-agent",
+    "unknown-task",
+}
+BROAD_TASK_RE = re.compile(r"\b(all context|all notes|all tasks|anything|everything|whatever)\b", re.I)
 
 
 class ApprovalRequired(ValueError):
@@ -36,6 +51,20 @@ class InvalidPipelineInput(ValueError):
 class Artifact:
     path: Path
     text: str
+
+
+@dataclass(frozen=True)
+class DiagnosticCheck:
+    name: str
+    passed: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class DiagnosticResult:
+    artifact: Artifact
+    passed: bool
+    checks: tuple[DiagnosticCheck, ...]
 
 
 def utc_now() -> str:
@@ -212,6 +241,125 @@ def create_packet(
         approved_digest=digest,
     )
     return write_text(output_path, text)
+
+
+def diagnose_packet(packet_input: str | Path, output_path: str | Path) -> DiagnosticResult:
+    packet = read_text(packet_input)
+    fields = parse_frontmatter(packet)
+
+    agent = fields.get("agent", "")
+    task = fields.get("task", "")
+    approved_digest = fields.get("approved_digest", "")
+    body = strip_frontmatter(packet)
+    scope_section = _markdown_section(packet, "Scope")
+    approved_context_section = _markdown_section(packet, "Approved Context")
+
+    checks = tuple(
+        [
+            DiagnosticCheck(
+                "frontmatter present",
+                bool(fields),
+                "frontmatter found" if fields else "frontmatter missing or malformed",
+            ),
+            DiagnosticCheck(
+                "artifact type is context_packet",
+                fields.get("type") == "context_packet",
+                _frontmatter_detail(fields, "type", "context_packet"),
+            ),
+            DiagnosticCheck(
+                "agent is scoped",
+                _is_scoped_agent(agent),
+                _scope_detail("agent", agent, min_length=2, max_length=80),
+            ),
+            DiagnosticCheck(
+                "task is scoped",
+                _is_scoped_task(task),
+                _task_scope_detail(task),
+            ),
+            DiagnosticCheck(
+                "approved_digest is present and formatted",
+                bool(SHORT_DIGEST_RE.fullmatch(approved_digest)),
+                _digest_detail(approved_digest),
+            ),
+            DiagnosticCheck(
+                "body digest matches frontmatter",
+                bool(approved_digest) and f"Approved source digest: {approved_digest}" in body,
+                (
+                    "body records the approved_digest"
+                    if approved_digest and f"Approved source digest: {approved_digest}" in body
+                    else "body is missing the approved source digest line"
+                ),
+            ),
+            DiagnosticCheck(
+                f"no {REDACTION_MARKER} marker leaked",
+                REDACTION_MARKER not in packet,
+                (
+                    f"{REDACTION_MARKER} marker not found"
+                    if REDACTION_MARKER not in packet
+                    else f"{REDACTION_MARKER} marker found"
+                ),
+            ),
+            DiagnosticCheck(
+                "context packet heading present",
+                _has_markdown_heading(packet, "Context Packet"),
+                (
+                    "# Context Packet heading found"
+                    if _has_markdown_heading(packet, "Context Packet")
+                    else "# Context Packet heading missing"
+                ),
+            ),
+            DiagnosticCheck(
+                "scope section present",
+                scope_section is not None,
+                "## Scope heading found" if scope_section is not None else "## Scope heading missing",
+            ),
+            DiagnosticCheck(
+                "scope section has guardrails",
+                bool(scope_section and _section_has_bullets(scope_section) and "approval" in scope_section.lower()),
+                (
+                    "scope section includes approval guardrails"
+                    if scope_section and _section_has_bullets(scope_section) and "approval" in scope_section.lower()
+                    else "scope section should include bullet guardrails and approval language"
+                ),
+            ),
+            DiagnosticCheck(
+                "approved context section present",
+                approved_context_section is not None,
+                (
+                    "## Approved Context heading found"
+                    if approved_context_section is not None
+                    else "## Approved Context heading missing"
+                ),
+            ),
+            DiagnosticCheck(
+                "approved context is not empty",
+                bool(approved_context_section and approved_context_section.strip()),
+                (
+                    "approved context has content"
+                    if approved_context_section and approved_context_section.strip()
+                    else "approved context section is empty"
+                ),
+            ),
+            DiagnosticCheck(
+                "body scope matches frontmatter",
+                bool(agent and task and f"Agent: {agent}" in body and f"Task: {task}" in body),
+                (
+                    "body Agent and Task lines match frontmatter"
+                    if agent and task and f"Agent: {agent}" in body and f"Task: {task}" in body
+                    else "body Agent and Task lines do not match frontmatter"
+                ),
+            ),
+        ]
+    )
+    passed = all(check.passed for check in checks)
+    packet_digest = sha256(packet.encode("utf-8")).hexdigest()[:16]
+    text = _diagnostics_report_text(
+        packet_name=Path(packet_input).name,
+        packet_digest=packet_digest,
+        passed=passed,
+        checks=checks,
+    )
+    return DiagnosticResult(write_text(output_path, text), passed, checks)
 
 
 def create_request(packet_input: str | Path, output_path: str | Path) -> Artifact:
@@ -398,6 +546,37 @@ def _format_bullets(items: list[str], fallback: list[str]) -> str:
     return "\n".join(f"- {item}" for item in selected)
 
 
+def _diagnostics_report_text(
+    packet_name: str,
+    packet_digest: str,
+    passed: bool,
+    checks: tuple[DiagnosticCheck, ...],
+) -> str:
+    overall = "pass" if passed else "fail"
+    passed_count = sum(1 for check in checks if check.passed)
+    rows = "\n".join(
+        f"| {_escape_table_cell(check.name)} | {'PASS' if check.passed else 'FAIL'} | {_escape_table_cell(check.detail)} |"
+        for check in checks
+    )
+    return (
+        "---\n"
+        "type: packet_diagnostics\n"
+        f"packet: {packet_name}\n"
+        f"packet_digest: {packet_digest}\n"
+        f"overall: {overall}\n"
+        "---\n\n"
+        "# Packet Diagnostics\n\n"
+        f"**Overall:** {overall}\n\n"
+        f"**Packet:** {packet_name}  \n"
+        f"**Packet digest:** `{packet_digest}`  \n"
+        f"**Checks passed:** {passed_count}/{len(checks)}\n\n"
+        "## Checks\n\n"
+        "| Check | Result | Detail |\n"
+        "| --- | --- | --- |\n"
+        f"{rows}\n"
+    )
+
+
 def _document_body(body: str) -> str:
     """Remove template indentation without shifting interpolated multiline text."""
     lines = dedent(body).splitlines()
@@ -423,3 +602,87 @@ def _is_section_label(line: str) -> bool:
         return False
     label = line[:-1].strip()
     return bool(label) and len(label.split()) <= 4
+
+
+def _frontmatter_detail(fields: dict[str, str], key: str, expected: str) -> str:
+    observed = fields.get(key)
+    if observed == expected:
+        return f"{key}={expected}"
+    if observed:
+        return f"expected {key}={expected}; found {observed}"
+    return f"expected {key}={expected}; found missing"
+
+
+def _has_markdown_heading(text: str, heading: str) -> bool:
+    pattern = rf"(?m)^#+\s+{re.escape(heading)}\s*$"
+    return bool(re.search(pattern, text))
+
+
+def _markdown_section(text: str, heading: str) -> str | None:
+    pattern = rf"(?ms)^##\s+{re.escape(heading)}\s*$\n?(.*?)(?=^##\s+|\Z)"
+    match = re.search(pattern, text)
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+def _section_has_bullets(text: str) -> bool:
+    return bool(re.search(r"(?m)^-\s+\S", text))
+
+
+def _is_scoped_agent(value: str) -> bool:
+    normalized = value.strip().lower()
+    return 2 <= len(value.strip()) <= 80 and normalized not in PLACEHOLDER_SCOPE_VALUES
+
+
+def _is_scoped_task(value: str) -> bool:
+    normalized = value.strip().lower()
+    if not 8 <= len(value.strip()) <= 180:
+        return False
+    if normalized in PLACEHOLDER_SCOPE_VALUES:
+        return False
+    if BROAD_TASK_RE.search(value):
+        return False
+    return bool(re.search(r"[A-Za-z]", value))
+
+
+def _scope_detail(label: str, value: str, min_length: int, max_length: int) -> str:
+    stripped = value.strip()
+    if not stripped:
+        return f"{label} is missing or empty"
+    if stripped.lower() in PLACEHOLDER_SCOPE_VALUES:
+        return f"{label} uses placeholder value {stripped}"
+    if len(stripped) < min_length:
+        return f"{label} is too short"
+    if len(stripped) > max_length:
+        return f"{label} is too long"
+    return f"{label} is scoped"
+
+
+def _task_scope_detail(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        return "task is missing or empty"
+    if stripped.lower() in PLACEHOLDER_SCOPE_VALUES:
+        return f"task uses placeholder value {stripped}"
+    if len(stripped) < 8:
+        return "task is too short to be specific"
+    if len(stripped) > 180:
+        return "task is too long for a narrow packet"
+    if BROAD_TASK_RE.search(stripped):
+        return "task is too broad for a scoped packet"
+    if not re.search(r"[A-Za-z]", stripped):
+        return "task must include readable text"
+    return "task is scoped"
+
+
+def _digest_detail(value: str) -> str:
+    if not value:
+        return "approved_digest is missing or empty"
+    if not SHORT_DIGEST_RE.fullmatch(value):
+        return "approved_digest must be a 16-character lowercase hex digest"
+    return "approved_digest is a 16-character lowercase hex digest"
+
+
+def _escape_table_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")

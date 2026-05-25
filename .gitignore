@@ -17,6 +17,7 @@ env/
 
 # Local output from demos
 .pcr-demo/
+.pcr-smoke/
 pcr-smoke/
 
 # Editors and OS files

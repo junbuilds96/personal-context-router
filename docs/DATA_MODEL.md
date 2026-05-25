@@ -30,6 +30,14 @@ YAML-ish frontmatter. There is no runtime YAML dependency.
 - Scoped to one `agent` and one `task`
 - Includes a digest of the approved input
 
+`packet_diagnostics`
+
+- Created by `pcr diagnose`
+- Validates packet frontmatter, scoped `agent` and `task` fields, required
+  sections, approved digest format, digest consistency, and `[REDACTED]`
+  marker absence
+- Records an overall `pass` or `fail` plus itemized Markdown checks
+
 `context_request`
 
 - Created by `pcr request`
