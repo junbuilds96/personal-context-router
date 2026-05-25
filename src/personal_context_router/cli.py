@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands = parser.add_subparsers(
         dest="command",
-        metavar="{redact,extract,approve,packet,inspect,request,writeback,run-sample}",
+        metavar="{redact,extract,approve,packet,diagnose,request,writeback,run-sample}",
         required=True,
     )
 
@@ -58,12 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     packet.add_argument("--out", required=True, metavar="PACKET_OUTPUT")
     packet.set_defaults(func=_cmd_packet)
 
-    inspect = subcommands.add_parser("inspect", help="Validate a context packet and write diagnostics.")
-    _add_diagnose_arguments(inspect)
-
-    diagnose = subcommands.add_parser("diagnose", help=argparse.SUPPRESS)
+    diagnose = subcommands.add_parser("diagnose", help="Validate a context packet and write diagnostics.")
     _add_diagnose_arguments(diagnose)
-    _hide_subcommand(subcommands, "diagnose")
+
+    inspect = subcommands.add_parser("inspect", help=argparse.SUPPRESS)
+    _add_diagnose_arguments(inspect)
+    _hide_subcommand(subcommands, "inspect")
 
     diagnostics = subcommands.add_parser("diagnostics", help=argparse.SUPPRESS)
     _add_diagnose_arguments(diagnostics)

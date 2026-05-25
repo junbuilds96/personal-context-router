@@ -218,7 +218,7 @@ def test_cli_approve_gate_fails_nonzero(tmp_path: Path):
     assert "--approve-all" in result.stderr
 
 
-def test_cli_inspect_fails_nonzero_and_writes_report(tmp_path: Path):
+def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
     packet = tmp_path / "packet.md"
     report = tmp_path / "diagnostics.md"
     packet.write_text("---\ntype: context_packet\n---\n\n# Packet\n", encoding="utf-8")
@@ -231,7 +231,7 @@ def test_cli_inspect_fails_nonzero_and_writes_report(tmp_path: Path):
             sys.executable,
             "-m",
             "personal_context_router.cli",
-            "inspect",
+            "diagnose",
             str(packet),
             "--out",
             str(report),
@@ -248,7 +248,7 @@ def test_cli_inspect_fails_nonzero_and_writes_report(tmp_path: Path):
     assert "overall: fail" in report.read_text(encoding="utf-8")
 
 
-def test_cli_help_lists_inspect_not_legacy_aliases():
+def test_cli_help_lists_diagnose_not_legacy_aliases():
     env = os.environ.copy()
     src_path = str(Path(__file__).resolve().parents[1] / "src")
     env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
@@ -267,10 +267,11 @@ def test_cli_help_lists_inspect_not_legacy_aliases():
     )
 
     assert result.returncode == 0
-    assert "{redact,extract,approve,packet,inspect,request,writeback,run-sample}" in result.stdout
-    assert "inspect" in result.stdout
+    assert "{redact,extract,approve,packet,diagnose,request,writeback,run-sample}" in result.stdout
+    assert "diagnose" in result.stdout
     assert "Validate a context packet and write diagnostics." in result.stdout
-    assert "{redact,extract,approve,packet,diagnose,request,writeback,run-sample}" not in result.stdout
+    assert "{redact,extract,approve,packet,inspect,request,writeback,run-sample}" not in result.stdout
     assert "{redact,extract,approve,packet,diagnostics,request,writeback,run-sample}" not in result.stdout
-    assert "diagnose          " not in result.stdout
+    assert "diagnose          " in result.stdout
+    assert "inspect           " not in result.stdout
     assert "diagnostics        " not in result.stdout
