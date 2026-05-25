@@ -21,6 +21,32 @@ redact -> extract signals -> approve -> packet -> diagnose -> request -> writeba
                                   one agent, one task
 ```
 
+## What You Get After 2 Minutes
+
+A messy synthetic note starts with useful task context mixed with things an
+agent should not receive:
+
+```text
+Contact from pretend stakeholder: alex.demo@example.test
+api_key = demo_key_that_should_not_ship
+docs-agent needs a concise README explanation.
+```
+
+After `pcr run-sample` and `pcr diagnose`, the agent gets a scoped packet and
+an auditable diagnostics report:
+
+```text
+Agent: demo-agent
+Task: draft a scoped implementation plan
+Approved source digest: <16-char digest>
+Diagnostics: pass, 13/13 checks
+Writeback: sufficient, without adding raw private context
+```
+
+See the full [2-minute demo](docs/DEMO.md), the curated
+[diagnostics report](examples/diagnostics-report.md), and the
+[agent handoff case study](examples/case-study-agent-handoff.md).
+
 ## Quickstart
 
 ```bash
@@ -36,7 +62,7 @@ pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md"
 You get reviewable Markdown artifacts:
 
 ```bash
-find "$PCR_DEMO" -maxdepth 1 -type f | sort
+find "$PCR_DEMO" -maxdepth 1 -type f -exec basename {} \; | sort
 sed -n '1,120p' "$PCR_DEMO/04-packet.md"
 sed -n '1,120p' "$PCR_DEMO/04-diagnostics.md"
 sed -n '1,120p' "$PCR_DEMO/06-writeback.md"
@@ -80,7 +106,8 @@ pcr approve "$PCR_DEMO/02-signals.md" --out "$PCR_DEMO/not-approved.md"
 ```
 
 See the value proof in
-[examples/case-study-agent-handoff.md](examples/case-study-agent-handoff.md).
+[docs/DEMO.md](docs/DEMO.md) and the longer
+[agent handoff case study](examples/case-study-agent-handoff.md).
 
 ## Safety Boundary
 

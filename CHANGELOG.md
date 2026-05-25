@@ -4,7 +4,8 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
-No unreleased changes yet.
+- Added a 2-minute value proof demo, a compact README before/after section, and
+  a curated synthetic diagnostics report example.
 
 ## 0.1.0 - 2026-05-25
 
