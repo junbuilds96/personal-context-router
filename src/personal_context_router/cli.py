@@ -1,0 +1,127 @@
+"""Command line interface for Personal Context Router."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from . import __version__
+from .core import (
+    ApprovalRequired,
+    InvalidPipelineInput,
+    approve_signals,
+    create_packet,
+    create_request,
+    create_writeback,
+    extract_signals,
+    redact_file,
+    run_sample,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pcr",
+        description="Personal context, routed safely.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    redact = subcommands.add_parser("redact", help="Redact obvious sensitive values from an input note.")
+    redact.add_argument("input", metavar="INPUT")
+    redact.add_argument("--out", required=True, metavar="OUTPUT")
+    redact.set_defaults(func=_cmd_redact)
+
+    extract = subcommands.add_parser("extract", help="Extract deterministic context signals from redacted input.")
+    extract.add_argument("redacted_input", metavar="REDACTED_INPUT")
+    extract.add_argument("--source", required=True, metavar="SOURCE")
+    extract.add_argument("--out", required=True, metavar="SIGNALS_OUTPUT")
+    extract.set_defaults(func=_cmd_extract)
+
+    approve = subcommands.add_parser("approve", help="Approve extracted signals for packet generation.")
+    approve.add_argument("signals_input", metavar="SIGNALS_INPUT")
+    approve.add_argument("--approve-all", action="store_true", help="Required explicit approval gate.")
+    approve.add_argument("--out", required=True, metavar="APPROVED_OUTPUT")
+    approve.set_defaults(func=_cmd_approve)
+
+    packet = subcommands.add_parser("packet", help="Build a task-scoped context packet from approved signals.")
+    packet.add_argument("approved_input", metavar="APPROVED_INPUT")
+    packet.add_argument("--agent", required=True, metavar="AGENT")
+    packet.add_argument("--task", required=True, metavar="TASK")
+    packet.add_argument("--out", required=True, metavar="PACKET_OUTPUT")
+    packet.set_defaults(func=_cmd_packet)
+
+    request = subcommands.add_parser("request", help="Create an auditable context request from a packet.")
+    request.add_argument("packet_input", metavar="PACKET_INPUT")
+    request.add_argument("--out", required=True, metavar="REQUEST_OUTPUT")
+    request.set_defaults(func=_cmd_request)
+
+    writeback = subcommands.add_parser("writeback", help="Record whether a request had sufficient context.")
+    writeback.add_argument("request_input", metavar="REQUEST_INPUT")
+    writeback.add_argument("--out", required=True, metavar="WRITEBACK_OUTPUT")
+    writeback.add_argument("--status", required=True, choices=["sufficient", "insufficient"])
+    writeback.add_argument("--note", required=True, metavar="TEXT")
+    writeback.add_argument("--decision-out", metavar="PATH")
+    writeback.set_defaults(func=_cmd_writeback)
+
+    sample = subcommands.add_parser("run-sample", help="Run the complete synthetic demo workflow.")
+    sample.add_argument("--workdir", required=True, metavar="DIR")
+    sample.set_defaults(func=_cmd_run_sample)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        artifact = args.func(args)
+    except (ApprovalRequired, InvalidPipelineInput, ValueError) as exc:
+        parser.exit(2, f"pcr: error: {exc}\n")
+
+    if isinstance(artifact, list):
+        print("Wrote demo artifacts:")
+        for item in artifact:
+            print(f"- {item.path}")
+    else:
+        print(f"Wrote {artifact.path}")
+    return 0
+
+
+def _cmd_redact(args: argparse.Namespace):
+    return redact_file(args.input, args.out)
+
+
+def _cmd_extract(args: argparse.Namespace):
+    return extract_signals(args.redacted_input, args.source, args.out)
+
+
+def _cmd_approve(args: argparse.Namespace):
+    return approve_signals(args.signals_input, args.out, approve_all=args.approve_all)
+
+
+def _cmd_packet(args: argparse.Namespace):
+    return create_packet(args.approved_input, args.agent, args.task, args.out)
+
+
+def _cmd_request(args: argparse.Namespace):
+    return create_request(args.packet_input, args.out)
+
+
+def _cmd_writeback(args: argparse.Namespace):
+    return create_writeback(
+        args.request_input,
+        args.out,
+        status=args.status,
+        note=args.note,
+        decision_out=args.decision_out,
+    )
+
+
+def _cmd_run_sample(args: argparse.Namespace):
+    return run_sample(args.workdir)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
