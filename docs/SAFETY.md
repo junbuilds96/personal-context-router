@@ -31,9 +31,9 @@ reviewable workflow, not as a guarantee that every sensitive value is removed.
 
 ## Human Approval Gate
 
-`pcr approve` requires `--approve-all`. Without it, the command exits nonzero.
-That friction is deliberate: context should not become agent input just because
-it was extractable.
+`pcr approve` requires `--approve-all`, `--select`, or `--reject`. Without one
+of those options, the command exits nonzero. That friction is deliberate:
+context should not become agent input just because it was extractable.
 
 ## Public Demo Policy
 

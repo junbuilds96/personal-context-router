@@ -20,8 +20,9 @@ YAML-ish frontmatter. There is no runtime YAML dependency.
 
 `approved_signals`
 
-- Created by `pcr approve --approve-all`
-- Records the approval gate in frontmatter
+- Created by `pcr approve --approve-all`, `--select`, or `--reject`
+- Records the approval mode, selected/rejected indexes, and selectable signal
+  count in frontmatter
 - Required input for packet generation
 
 `context_packet`

@@ -47,7 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     approve = subcommands.add_parser("approve", help="Approve extracted signals for packet generation.")
     approve.add_argument("signals_input", metavar="SIGNALS_INPUT")
-    approve.add_argument("--approve-all", action="store_true", help="Required explicit approval gate.")
+    approval = approve.add_mutually_exclusive_group()
+    approval.add_argument("--approve-all", action="store_true", help="Approve all selectable signal bullets.")
+    approval.add_argument("--select", metavar="INDEXES", help="Approve only comma-separated signal indexes.")
+    approval.add_argument("--reject", metavar="INDEXES", help="Approve all signal indexes except these.")
     approve.add_argument("--out", required=True, metavar="APPROVED_OUTPUT")
     approve.set_defaults(func=_cmd_approve)
 
@@ -119,7 +122,13 @@ def _cmd_extract(args: argparse.Namespace):
 
 
 def _cmd_approve(args: argparse.Namespace):
-    return approve_signals(args.signals_input, args.out, approve_all=args.approve_all)
+    return approve_signals(
+        args.signals_input,
+        args.out,
+        approve_all=args.approve_all,
+        select=args.select,
+        reject=args.reject,
+    )
 
 
 def _cmd_packet(args: argparse.Namespace):

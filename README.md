@@ -101,7 +101,15 @@ pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-request.md"
 pcr writeback "$PCR_DEMO/05-request.md" --out "$PCR_DEMO/06-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/07-decision.md"
 ```
 
-`pcr approve` intentionally fails without `--approve-all`:
+To approve only selected signal bullets, use comma-separated 1-based indexes:
+
+```bash
+pcr approve "$PCR_DEMO/02-signals.md" --select 1,3 --out "$PCR_DEMO/03-selected.md"
+pcr approve "$PCR_DEMO/02-signals.md" --reject 2,4 --out "$PCR_DEMO/03-rejected.md"
+```
+
+`pcr approve` intentionally fails without `--approve-all`, `--select`, or
+`--reject`:
 
 ```bash
 pcr approve "$PCR_DEMO/02-signals.md" --out "$PCR_DEMO/not-approved.md"
@@ -124,7 +132,7 @@ safety policy.
 
 - `pcr redact INPUT --out OUTPUT`
 - `pcr extract REDACTED_INPUT --source SOURCE --out SIGNALS_OUTPUT`
-- `pcr approve SIGNALS_INPUT --approve-all --out APPROVED_OUTPUT`
+- `pcr approve SIGNALS_INPUT (--approve-all|--select INDEXES|--reject INDEXES) --out APPROVED_OUTPUT`
 - `pcr packet APPROVED_INPUT --agent AGENT --task TASK --out PACKET_OUTPUT`
 - `pcr diagnose PACKET_INPUT --out DIAGNOSTICS_OUTPUT`
 - `pcr request PACKET_INPUT --out REQUEST_OUTPUT`
@@ -152,7 +160,6 @@ make smoke
 ## Roadmap
 
 - Stronger redaction rules with previewable diffs.
-- Per-signal approval instead of approve-all only.
 - Machine-readable JSON export alongside Markdown.
 - Pluggable extractors while keeping local-first defaults.
 - Richer writeback summaries for iterative context repair.

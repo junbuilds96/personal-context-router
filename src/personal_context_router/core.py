@@ -185,24 +185,88 @@ def extract_signals(redacted_input: str | Path, source: str, output_path: str | 
     return write_text(output_path, text)
 
 
-def approve_signals(signals_input: str | Path, output_path: str | Path, approve_all: bool) -> Artifact:
-    if not approve_all:
-        raise ApprovalRequired("Refusing to approve signals without --approve-all.")
+def approve_signals(
+    signals_input: str | Path,
+    output_path: str | Path,
+    approve_all: bool,
+    select: str | None = None,
+    reject: str | None = None,
+) -> Artifact:
+    approval_options = sum(
+        1 for option in (approve_all, select is not None, reject is not None) if option
+    )
+    if approval_options == 0:
+        raise ApprovalRequired(
+            "Refusing to approve signals without --approve-all, --select, or --reject."
+        )
+    if approval_options > 1:
+        raise ValueError("--approve-all, --select, and --reject are mutually exclusive.")
 
     signals = read_text(signals_input)
+    signal_items = _selectable_signal_items(signals)
+    rejected_indexes: tuple[int, ...] = ()
+
+    if approve_all:
+        selected_indexes = tuple(range(1, len(signal_items) + 1))
+        selected_text = strip_frontmatter(signals).rstrip()
+        approval = "approve-all"
+        body_details = [
+            "Approval mode: approve-all",
+            f"Selected indexes: {_format_index_audit(selected_indexes)}",
+            "Rejected indexes: none",
+            f"Total selectable signals: {len(signal_items)}",
+        ]
+    elif select is not None:
+        selected_indexes = _parse_signal_indexes(
+            select, total=len(signal_items), option="--select"
+        )
+        selected_text = _format_bullets(
+            [signal_items[index - 1] for index in selected_indexes], []
+        )
+        approval = "select"
+        body_details = [
+            "Approval mode: select",
+            f"Selected indexes: {_format_index_audit(selected_indexes)}",
+            "Rejected indexes: none",
+            f"Total selectable signals: {len(signal_items)}",
+        ]
+    else:
+        rejected_indexes = _parse_signal_indexes(
+            reject or "", total=len(signal_items), option="--reject"
+        )
+        rejected = set(rejected_indexes)
+        selected_indexes = tuple(
+            index for index in range(1, len(signal_items) + 1) if index not in rejected
+        )
+        selected_text = _format_bullets(
+            [signal_items[index - 1] for index in selected_indexes], []
+        )
+        approval = "reject"
+        body_details = [
+            "Approval mode: reject",
+            f"Selected indexes: {_format_index_audit(selected_indexes)}",
+            f"Rejected indexes: {_format_index_audit(rejected_indexes)}",
+            f"Total selectable signals: {len(signal_items)}",
+        ]
+
+    approval_audit = "\n".join(body_details)
     text = document(
         "approved_signals",
         f"""\
         # Approved Context Signals
 
-        Approval: approve-all
+        Approval: {approval}
+        {approval_audit}
 
         The following redacted signals are approved for packet generation.
 
-        {strip_frontmatter(signals).rstrip()}
+        {selected_text}
         """,
         source=Path(signals_input).name,
-        approval="approve-all",
+        approval=approval,
+        selected_indexes=_format_index_audit(selected_indexes),
+        rejected_indexes=_format_index_audit(rejected_indexes),
+        total_selectable_signals=str(len(signal_items)),
     )
     return write_text(output_path, text)
 
@@ -215,7 +279,11 @@ def create_packet(
 ) -> Artifact:
     approved = read_text(approved_input)
     fields = parse_frontmatter(approved)
-    if fields.get("type") != "approved_signals" or fields.get("approval") != "approve-all":
+    if fields.get("type") != "approved_signals" or fields.get("approval") not in {
+        "approve-all",
+        "select",
+        "reject",
+    }:
         raise InvalidPipelineInput("Packet creation requires an approved signals artifact.")
 
     digest = sha256(approved.encode("utf-8")).hexdigest()[:16]
@@ -490,6 +558,57 @@ def run_sample(workdir: str | Path, sample_path: str | Path | None = None) -> li
         )
     )
     return artifacts
+
+
+def _selectable_signal_items(signals: str) -> tuple[str, ...]:
+    items: list[str] = []
+    for line in strip_frontmatter(signals).splitlines():
+        match = re.match(r"^\s*-\s+(.+?)\s*$", line)
+        if match is None:
+            continue
+        item = match.group(1).strip()
+        if not item or _is_section_label(item):
+            continue
+        items.append(item)
+    return tuple(items)
+
+
+def _parse_signal_indexes(value: str, total: int, option: str) -> tuple[int, ...]:
+    if total == 0:
+        raise ValueError(
+            f"{option} cannot be used because no selectable signal bullets were found."
+        )
+    if not value.strip():
+        raise ValueError(f"{option} requires a comma-separated list of signal indexes.")
+
+    indexes: list[int] = []
+    seen: set[int] = set()
+    for raw_part in value.split(","):
+        part = raw_part.strip()
+        if not part:
+            raise ValueError(f"{option} contains an empty index in {value!r}.")
+        try:
+            index = int(part)
+        except ValueError as exc:
+            raise ValueError(f"{option} index {part!r} is not an integer.") from exc
+        if index < 1:
+            raise ValueError(f"{option} index {index} must be 1 or greater.")
+        if index > total:
+            raise ValueError(
+                f"{option} index {index} is out of range; only {total} selectable signals found."
+            )
+        if index in seen:
+            raise ValueError(f"{option} index {index} is duplicated.")
+        seen.add(index)
+        indexes.append(index)
+
+    return tuple(indexes)
+
+
+def _format_index_audit(indexes: tuple[int, ...]) -> str:
+    if not indexes:
+        return "none"
+    return ",".join(str(index) for index in indexes)
 
 
 def _collect_lines(text: str, keywords: tuple[str, ...]) -> list[str]:

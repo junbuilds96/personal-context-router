@@ -35,7 +35,17 @@ pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-request.md"
 pcr writeback "$PCR_DEMO/05-request.md" --out "$PCR_DEMO/06-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/07-decision.md"
 ```
 
-`pcr approve` intentionally fails without `--approve-all`.
+`pcr approve` treats signal bullet lines as 1-based selectable items. Use
+`--approve-all` to approve everything, `--select` to include only listed
+indexes, or `--reject` to include everything except listed indexes:
+
+```bash
+pcr approve "$PCR_DEMO/02-signals.md" --select 1,3 --out "$PCR_DEMO/03-selected.md"
+pcr approve "$PCR_DEMO/02-signals.md" --reject 2,4 --out "$PCR_DEMO/03-rejected.md"
+```
+
+`pcr approve` intentionally fails without `--approve-all`, `--select`, or
+`--reject`.
 
 `pcr diagnose` validates a generated context packet and writes a Markdown report
 with an overall pass/fail and itemized checks. It exits `0` on pass and `1` on
