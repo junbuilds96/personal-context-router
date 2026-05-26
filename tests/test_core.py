@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from personal_context_router import __version__
 from personal_context_router.core import (
     ApprovalRequired,
     REDACTION_MARKER,
@@ -742,3 +743,50 @@ def test_cli_help_lists_diagnose_not_legacy_aliases():
     assert "diagnose          " in result.stdout
     assert "inspect           " not in result.stdout
     assert "diagnostics        " not in result.stdout
+
+
+def test_package_module_help_matches_cli_entrypoint():
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router",
+            "--help",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert "usage: pcr" in result.stdout
+    assert "{redact,extract,approve,packet,diagnose,request,writeback,run-sample}" in result.stdout
+    assert "Personal context, routed safely." in result.stdout
+
+
+def test_package_module_version_matches_cli_entrypoint():
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router",
+            "--version",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == f"pcr {__version__}\n"
+    assert result.stderr == ""

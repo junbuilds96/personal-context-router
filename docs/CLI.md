@@ -10,7 +10,7 @@ Both entrypoints are supported:
 
 ```bash
 pcr --help
-python -m personal_context_router.cli --help
+python -m personal_context_router --help
 ```
 
 Run the full synthetic demo:

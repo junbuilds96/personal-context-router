@@ -142,7 +142,7 @@ safety policy.
 Module form also works:
 
 ```bash
-python -m personal_context_router.cli --help
+python -m personal_context_router --help
 ```
 
 More detail: [docs/CLI.md](docs/CLI.md) and [docs/DATA_MODEL.md](docs/DATA_MODEL.md).
