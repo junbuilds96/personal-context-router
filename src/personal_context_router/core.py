@@ -278,6 +278,7 @@ def create_packet(
     agent: str,
     task: str,
     output_path: str | Path,
+    json_output_path: str | Path | None = None,
 ) -> Artifact:
     approved = read_text(approved_input)
     fields = parse_frontmatter(approved)
@@ -310,7 +311,35 @@ def create_packet(
         task=task,
         approved_digest=digest,
     )
-    return write_text(output_path, text)
+    artifact = write_text(output_path, text)
+    if json_output_path is not None:
+        write_text(json_output_path, serialize_context_packet_json(artifact.path))
+    return artifact
+
+
+def serialize_context_packet_json(packet_input: str | Path) -> str:
+    packet = read_text(packet_input)
+    fields = parse_frontmatter(packet)
+    if fields.get("type") != "context_packet":
+        raise InvalidPipelineInput("JSON packet export requires a context packet.")
+
+    approved_context = _markdown_section(packet, "Approved Context")
+    if approved_context is None:
+        raise InvalidPipelineInput(
+            "JSON packet export requires an Approved Context section."
+        )
+
+    payload = {
+        "schema": "pcr.context_packet.v1",
+        "type": "context_packet",
+        "agent": fields.get("agent", ""),
+        "task": fields.get("task", ""),
+        "approved_digest": fields.get("approved_digest", ""),
+        "packet_digest": sha256(packet.encode("utf-8")).hexdigest()[:16],
+        "source_filename": Path(packet_input).name,
+        "approved_context": approved_context,
+    }
+    return json.dumps(payload, indent=2) + "\n"
 
 
 def diagnose_packet(

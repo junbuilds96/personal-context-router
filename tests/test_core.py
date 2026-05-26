@@ -1,5 +1,6 @@
 import json
 import os
+from hashlib import sha256
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from personal_context_router.core import (
     redact_content,
     redact_file,
     run_sample,
+    serialize_context_packet_json,
 )
 
 
@@ -180,6 +182,77 @@ def test_packet_creation_accepts_subset_approval(tmp_path: Path):
     assert "- Keep this signal." in packet.text
     assert "- Drop this signal." not in packet.text
     assert diagnostics.passed is True
+
+
+def test_serialize_context_packet_json_serializes_stable_packet_fields(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    signals.write_text(
+        "---\ntype: context_signals\n---\n\n# Context Signals\n\n- Keep this signal.\n",
+        encoding="utf-8",
+    )
+    approved = approve_signals(
+        signals,
+        tmp_path / "approved.md",
+        approve_all=False,
+        select="1",
+    )
+    packet = create_packet(
+        approved.path,
+        agent="qa-agent",
+        task="verify JSON packet export",
+        output_path=tmp_path / "packet.md",
+    )
+
+    data = json.loads(serialize_context_packet_json(packet.path))
+
+    assert list(data) == [
+        "schema",
+        "type",
+        "agent",
+        "task",
+        "approved_digest",
+        "packet_digest",
+        "source_filename",
+        "approved_context",
+    ]
+    assert data["schema"] == "pcr.context_packet.v1"
+    assert data["type"] == "context_packet"
+    assert data["agent"] == "qa-agent"
+    assert data["task"] == "verify JSON packet export"
+    assert data["approved_digest"]
+    assert data["packet_digest"] == sha256(packet.text.encode("utf-8")).hexdigest()[:16]
+    assert data["source_filename"] == "packet.md"
+    assert "Approval mode: select" in data["approved_context"]
+    assert "- Keep this signal." in data["approved_context"]
+
+
+def test_packet_creation_writes_json_when_requested(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    signals.write_text(
+        "---\ntype: context_signals\n---\n\n# Context Signals\n\n- Keep this signal.\n",
+        encoding="utf-8",
+    )
+    approved = approve_signals(
+        signals,
+        tmp_path / "approved.md",
+        approve_all=False,
+        select="1",
+    )
+    json_packet = tmp_path / "packet.json"
+
+    packet = create_packet(
+        approved.path,
+        agent="qa-agent",
+        task="write JSON packet artifact",
+        output_path=tmp_path / "packet.md",
+        json_output_path=json_packet,
+    )
+
+    data = json.loads(json_packet.read_text(encoding="utf-8"))
+    assert packet.path.exists()
+    assert data["schema"] == "pcr.context_packet.v1"
+    assert data["source_filename"] == "packet.md"
+    assert data["packet_digest"] == sha256(packet.text.encode("utf-8")).hexdigest()[:16]
 
 
 def test_packet_request_writeback_pipeline(tmp_path: Path):
@@ -503,6 +576,106 @@ def test_cli_approve_reject_and_approve_all_are_mutually_exclusive(tmp_path: Pat
 
     assert result.returncode == 2
     assert "not allowed with argument" in result.stderr
+
+
+def test_cli_packet_writes_json_when_requested(tmp_path: Path):
+    approved = tmp_path / "approved.md"
+    packet = tmp_path / "packet.md"
+    json_packet = tmp_path / "packet.json"
+    approved.write_text(
+        "\n".join(
+            [
+                "---",
+                "type: approved_signals",
+                "approval: approve-all",
+                "---",
+                "",
+                "# Approved Context Signals",
+                "",
+                "Approval mode: approve-all",
+                "Selected indexes: 1",
+                "Rejected indexes: none",
+                "Total selectable signals: 1",
+                "",
+                "- Keep this signal.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "packet",
+            str(approved),
+            "--agent",
+            "qa-agent",
+            "--task",
+            "verify JSON packet export",
+            "--out",
+            str(packet),
+            "--json-out",
+            str(json_packet),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    data = json.loads(json_packet.read_text(encoding="utf-8"))
+    assert result.returncode == 0
+    assert f"Wrote {packet}" in result.stdout
+    assert packet.exists()
+    assert data["schema"] == "pcr.context_packet.v1"
+    assert data["type"] == "context_packet"
+    assert data["source_filename"] == "packet.md"
+    assert data["approved_context"].endswith("- Keep this signal.")
+
+
+def test_cli_packet_json_invalid_input_writes_no_outputs(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    packet = tmp_path / "packet.md"
+    json_packet = tmp_path / "packet.json"
+    signals.write_text(
+        "---\ntype: context_signals\n---\n\n# Context Signals\n\n- Not approved yet.\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "packet",
+            str(signals),
+            "--agent",
+            "qa-agent",
+            "--task",
+            "verify JSON packet export",
+            "--out",
+            str(packet),
+            "--json-out",
+            str(json_packet),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 2
+    assert "requires an approved signals artifact" in result.stderr
+    assert not packet.exists()
+    assert not json_packet.exists()
 
 
 def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):

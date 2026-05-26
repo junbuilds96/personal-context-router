@@ -29,7 +29,7 @@ PCR_DEMO="$(mktemp -d)"
 pcr redact examples/sample-note.md --out "$PCR_DEMO/01-redacted.md"
 pcr extract "$PCR_DEMO/01-redacted.md" --source synthetic-sample-note --out "$PCR_DEMO/02-signals.md"
 pcr approve "$PCR_DEMO/02-signals.md" --approve-all --out "$PCR_DEMO/03-approved.md"
-pcr packet "$PCR_DEMO/03-approved.md" --agent docs-agent --task "draft a README quickstart" --out "$PCR_DEMO/04-packet.md"
+pcr packet "$PCR_DEMO/03-approved.md" --agent docs-agent --task "draft a README quickstart" --out "$PCR_DEMO/04-packet.md" --json-out "$PCR_DEMO/04-packet.json"
 pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md" --json-out "$PCR_DEMO/04-diagnostics.json"
 pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-request.md"
 pcr writeback "$PCR_DEMO/05-request.md" --out "$PCR_DEMO/06-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/07-decision.md"
@@ -46,6 +46,11 @@ pcr approve "$PCR_DEMO/02-signals.md" --reject 2,4 --out "$PCR_DEMO/03-rejected.
 
 `pcr approve` intentionally fails without `--approve-all`, `--select`, or
 `--reject`.
+
+Use `pcr packet --json-out PATH` to also write a deterministic
+machine-readable context packet with schema `pcr.context_packet.v1`. The JSON
+includes scope fields, the approved digest, packet digest, source filename, and
+the approved context text.
 
 `pcr diagnose` validates a generated context packet and writes a Markdown report
 with an overall pass/fail and itemized checks. It exits `0` on pass and `1` on

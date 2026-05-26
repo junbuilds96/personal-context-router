@@ -59,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     packet.add_argument("--agent", required=True, metavar="AGENT")
     packet.add_argument("--task", required=True, metavar="TASK")
     packet.add_argument("--out", required=True, metavar="PACKET_OUTPUT")
+    packet.add_argument("--json-out", metavar="JSON_OUTPUT")
     packet.set_defaults(func=_cmd_packet)
 
     diagnose = subcommands.add_parser("diagnose", help="Validate a context packet and write diagnostics.")
@@ -132,7 +133,13 @@ def _cmd_approve(args: argparse.Namespace):
 
 
 def _cmd_packet(args: argparse.Namespace):
-    return create_packet(args.approved_input, args.agent, args.task, args.out)
+    return create_packet(
+        args.approved_input,
+        args.agent,
+        args.task,
+        args.out,
+        args.json_out,
+    )
 
 
 def _hide_subcommand(subcommands: argparse._SubParsersAction, name: str) -> None:

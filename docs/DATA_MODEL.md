@@ -30,6 +30,10 @@ YAML-ish frontmatter. There is no runtime YAML dependency.
 - Created by `pcr packet`
 - Scoped to one `agent` and one `task`
 - Includes a digest of the approved input
+- Optional JSON export created by `pcr packet --json-out`
+- JSON schema: `pcr.context_packet.v1`
+- JSON fields: `schema`, `type`, `agent`, `task`, `approved_digest`,
+  `packet_digest`, `source_filename`, and `approved_context`
 
 `packet_diagnostics`
 
@@ -38,6 +42,8 @@ YAML-ish frontmatter. There is no runtime YAML dependency.
   sections, approved digest format, digest consistency, and `[REDACTED]`
   marker absence
 - Records an overall `pass` or `fail` plus itemized Markdown checks
+- Optional JSON export created by `pcr diagnose --json-out`
+- JSON schema: `pcr.diagnostics.v1`
 
 `context_request`
 
