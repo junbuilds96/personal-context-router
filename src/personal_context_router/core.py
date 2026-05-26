@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+import json
 from pathlib import Path
 import re
 from textwrap import dedent
@@ -65,6 +66,7 @@ class DiagnosticResult:
     artifact: Artifact
     passed: bool
     checks: tuple[DiagnosticCheck, ...]
+    json_artifact: Artifact | None = None
 
 
 def utc_now() -> str:
@@ -311,7 +313,11 @@ def create_packet(
     return write_text(output_path, text)
 
 
-def diagnose_packet(packet_input: str | Path, output_path: str | Path) -> DiagnosticResult:
+def diagnose_packet(
+    packet_input: str | Path,
+    output_path: str | Path,
+    json_output_path: str | Path | None = None,
+) -> DiagnosticResult:
     packet = read_text(packet_input)
     fields = parse_frontmatter(packet)
 
@@ -427,7 +433,19 @@ def diagnose_packet(packet_input: str | Path, output_path: str | Path) -> Diagno
         passed=passed,
         checks=checks,
     )
-    return DiagnosticResult(write_text(output_path, text), passed, checks)
+    artifact = write_text(output_path, text)
+    json_artifact = None
+    if json_output_path is not None:
+        json_artifact = write_text(
+            json_output_path,
+            _diagnostics_report_json_text(
+                packet_name=Path(packet_input).name,
+                packet_digest=packet_digest,
+                passed=passed,
+                checks=checks,
+            ),
+        )
+    return DiagnosticResult(artifact, passed, checks, json_artifact)
 
 
 def create_request(packet_input: str | Path, output_path: str | Path) -> Artifact:
@@ -694,6 +712,36 @@ def _diagnostics_report_text(
         "| --- | --- | --- |\n"
         f"{rows}\n"
     )
+
+
+def _diagnostics_report_json_text(
+    packet_name: str,
+    packet_digest: str,
+    passed: bool,
+    checks: tuple[DiagnosticCheck, ...],
+) -> str:
+    passed_count = sum(1 for check in checks if check.passed)
+    payload = {
+        "schema": "pcr.diagnostics.v1",
+        "type": "packet_diagnostics",
+        "packet_filename": packet_name,
+        "packet_digest": packet_digest,
+        "overall": "pass" if passed else "fail",
+        "counts": {
+            "total": len(checks),
+            "passed": passed_count,
+            "failed": len(checks) - passed_count,
+        },
+        "checks": [
+            {
+                "name": check.name,
+                "result": "pass" if check.passed else "fail",
+                "detail": check.detail,
+            }
+            for check in checks
+        ],
+    }
+    return json.dumps(payload, indent=2) + "\n"
 
 
 def _document_body(body: str) -> str:

@@ -22,7 +22,7 @@ python -m pip install -e ".[dev]"
 
 PCR_DEMO="$(mktemp -d)"
 pcr run-sample --workdir "$PCR_DEMO"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md"
+pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md" --json-out "$PCR_DEMO/04-diagnostics.json"
 ```
 
 ```text
@@ -134,7 +134,7 @@ safety policy.
 - `pcr extract REDACTED_INPUT --source SOURCE --out SIGNALS_OUTPUT`
 - `pcr approve SIGNALS_INPUT (--approve-all|--select INDEXES|--reject INDEXES) --out APPROVED_OUTPUT`
 - `pcr packet APPROVED_INPUT --agent AGENT --task TASK --out PACKET_OUTPUT`
-- `pcr diagnose PACKET_INPUT --out DIAGNOSTICS_OUTPUT`
+- `pcr diagnose PACKET_INPUT --out DIAGNOSTICS_OUTPUT [--json-out JSON_OUTPUT]`
 - `pcr request PACKET_INPUT --out REQUEST_OUTPUT`
 - `pcr writeback REQUEST_INPUT --out WRITEBACK_OUTPUT --status sufficient|insufficient --note TEXT [--decision-out PATH]`
 - `pcr run-sample --workdir DIR`

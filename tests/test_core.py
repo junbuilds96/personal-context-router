@@ -1,5 +1,6 @@
-from pathlib import Path
+import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -240,6 +241,43 @@ def test_diagnose_packet_passes_valid_packet(tmp_path: Path):
     assert "| approved context section present | PASS | ## Approved Context heading found |" in diagnostics.artifact.text
 
 
+def test_diagnose_packet_writes_passing_json_diagnostics(tmp_path: Path):
+    source = tmp_path / "note.md"
+    source.write_text("Goal: build a demo.\n", encoding="utf-8")
+
+    redact_file(source, tmp_path / "redacted.md")
+    extract_signals(tmp_path / "redacted.md", "unit-test", tmp_path / "signals.md")
+    approve_signals(tmp_path / "signals.md", tmp_path / "approved.md", approve_all=True)
+    packet = create_packet(
+        tmp_path / "approved.md",
+        agent="qa-agent",
+        task="verify diagnostics",
+        output_path=tmp_path / "packet.md",
+    )
+
+    diagnostics = diagnose_packet(
+        packet.path,
+        tmp_path / "diagnostics.md",
+        tmp_path / "diagnostics.json",
+    )
+
+    assert diagnostics.passed is True
+    assert diagnostics.json_artifact is not None
+    data = json.loads(diagnostics.json_artifact.text)
+    assert data["schema"] == "pcr.diagnostics.v1"
+    assert data["type"] == "packet_diagnostics"
+    assert data["packet_filename"] == "packet.md"
+    assert data["packet_digest"]
+    assert data["overall"] == "pass"
+    assert data["counts"] == {"total": 13, "passed": 13, "failed": 0}
+    assert data["checks"][0] == {
+        "name": "frontmatter present",
+        "result": "pass",
+        "detail": "frontmatter found",
+    }
+    assert "Goal: build a demo." not in diagnostics.json_artifact.text
+
+
 def test_diagnose_packet_fails_invalid_packet(tmp_path: Path):
     packet = tmp_path / "packet.md"
     packet.write_text(
@@ -268,6 +306,50 @@ def test_diagnose_packet_fails_invalid_packet(tmp_path: Path):
     assert "| approved_digest is present and formatted | FAIL | approved_digest is missing or empty |" in diagnostics.artifact.text
     assert "| no [REDACTED] marker leaked | FAIL | [REDACTED] marker found |" in diagnostics.artifact.text
     assert "| approved context section present | FAIL | ## Approved Context heading missing |" in diagnostics.artifact.text
+
+
+def test_diagnose_packet_writes_failing_json_diagnostics(tmp_path: Path):
+    packet = tmp_path / "packet.md"
+    packet.write_text(
+        "\n".join(
+            [
+                "---",
+                "type: context_signals",
+                "agent: qa-agent",
+                "---",
+                "",
+                "# Context Packet",
+                "",
+                "## Scope",
+                "- marker leaked: [REDACTED]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostics = diagnose_packet(
+        packet,
+        tmp_path / "diagnostics.md",
+        tmp_path / "diagnostics.json",
+    )
+
+    assert diagnostics.passed is False
+    assert diagnostics.json_artifact is not None
+    data = json.loads(diagnostics.json_artifact.text)
+    assert data["overall"] == "fail"
+    assert data["counts"]["total"] == 13
+    assert data["counts"]["passed"] < 13
+    assert data["counts"]["failed"] > 0
+    assert {
+        "name": "artifact type is context_packet",
+        "result": "fail",
+        "detail": "expected type=context_packet; found context_signals",
+    } in data["checks"]
+    assert {
+        "name": "no [REDACTED] marker leaked",
+        "result": "fail",
+        "detail": "[REDACTED] marker found",
+    } in data["checks"]
 
 
 def test_extract_signals_skips_redacted_lines_and_section_labels(tmp_path: Path):
@@ -426,6 +508,7 @@ def test_cli_approve_reject_and_approve_all_are_mutually_exclusive(tmp_path: Pat
 def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
     packet = tmp_path / "packet.md"
     report = tmp_path / "diagnostics.md"
+    json_report = tmp_path / "diagnostics.json"
     packet.write_text("---\ntype: context_packet\n---\n\n# Packet\n", encoding="utf-8")
     env = os.environ.copy()
     src_path = str(Path(__file__).resolve().parents[1] / "src")
@@ -440,6 +523,8 @@ def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
             str(packet),
             "--out",
             str(report),
+            "--json-out",
+            str(json_report),
         ],
         text=True,
         capture_output=True,
@@ -448,9 +533,13 @@ def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
     )
 
     assert result.returncode == 1
+    assert f"Wrote {report}" in result.stdout
     assert "Diagnostics: fail" in result.stdout
+    assert str(json_report) not in result.stdout
     assert report.exists()
     assert "overall: fail" in report.read_text(encoding="utf-8")
+    assert json_report.exists()
+    assert json.loads(json_report.read_text(encoding="utf-8"))["overall"] == "fail"
 
 
 def test_cli_help_lists_diagnose_not_legacy_aliases():

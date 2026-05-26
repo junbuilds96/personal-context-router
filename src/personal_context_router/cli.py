@@ -144,11 +144,12 @@ def _hide_subcommand(subcommands: argparse._SubParsersAction, name: str) -> None
 def _add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("packet_input", metavar="PACKET_INPUT")
     parser.add_argument("--out", required=True, metavar="DIAGNOSTICS_OUTPUT")
+    parser.add_argument("--json-out", metavar="JSON_OUTPUT")
     parser.set_defaults(func=_cmd_diagnose)
 
 
 def _cmd_diagnose(args: argparse.Namespace):
-    return diagnose_packet(args.packet_input, args.out)
+    return diagnose_packet(args.packet_input, args.out, args.json_out)
 
 
 def _cmd_request(args: argparse.Namespace):

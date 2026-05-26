@@ -4,6 +4,8 @@ All notable changes to this project will be documented here.
 
 ## Unreleased
 
+- Added `pcr diagnose --json-out` for deterministic machine-readable packet
+  diagnostics alongside the existing Markdown report.
 - Added a 2-minute value proof demo, a compact README before/after section, and
   a curated synthetic diagnostics report example.
 
