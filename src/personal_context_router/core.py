@@ -24,7 +24,22 @@ SECRET_LINE_RE = re.compile(
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 PHONEISH_RE = re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)")
 LONG_HEX_RE = re.compile(r"\b[a-fA-F0-9]{32,}\b")
+LOCAL_PATH_RE = re.compile(
+    r"""(?ix)
+    (?:/(?:home|Users)/[A-Za-z0-9._-]+(?:/[^\s`'"<>)\]]*)?)
+    |
+    (?:[A-Za-z]:\\Users\\[A-Za-z0-9._-]+(?:\\[^\s`'"<>)\]]*)?)
+    """
+)
 SHORT_DIGEST_RE = re.compile(r"^[a-f0-9]{16}$")
+LEAK_CATEGORY_LABELS = {
+    "credential": "credential-looking value",
+    "email_address": "email address",
+    "phone_like": "phone-like identifier",
+    "long_hex": "long hex string",
+    "local_path": "local absolute path",
+    "redaction_marker": f"{REDACTION_MARKER} marker",
+}
 PLACEHOLDER_SCOPE_VALUES = {
     "*",
     "all",
@@ -71,6 +86,12 @@ class DiagnosticResult:
 
 
 @dataclass(frozen=True)
+class LeakSummary:
+    total: int
+    counts_by_category: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
 class DoctorResult:
     workdir: Path
     passed: bool
@@ -99,6 +120,7 @@ class PacketStats:
     diagnostic_total: int
     diagnostic_passed_count: int
     diagnostic_failed_count: int
+    leak_summary: LeakSummary
 
 
 def utc_now() -> str:
@@ -371,7 +393,7 @@ def diagnose_packet(
     output_path: str | Path,
     json_output_path: str | Path | None = None,
 ) -> DiagnosticResult:
-    packet, packet_digest, checks = _packet_diagnostic_checks(packet_input)
+    packet, packet_digest, checks, leak_summary = _packet_diagnostic_checks(packet_input)
     passed = all(check.passed for check in checks)
     text = _diagnostics_report_text(
         packet_name=Path(packet_input).name,
@@ -389,13 +411,14 @@ def diagnose_packet(
                 packet_digest=packet_digest,
                 passed=passed,
                 checks=checks,
+                leak_summary=leak_summary,
             ),
     )
     return DiagnosticResult(artifact, passed, checks, json_artifact)
 
 
 def packet_stats(packet_input: str | Path) -> PacketStats:
-    packet, packet_digest, checks = _packet_diagnostic_checks(packet_input)
+    packet, packet_digest, checks, leak_summary = _packet_diagnostic_checks(packet_input)
     fields = parse_frontmatter(packet)
     if fields.get("type") != "context_packet":
         raise InvalidPipelineInput("Packet stats requires a context packet.")
@@ -418,6 +441,7 @@ def packet_stats(packet_input: str | Path) -> PacketStats:
         diagnostic_total=len(checks),
         diagnostic_passed_count=passed_count,
         diagnostic_failed_count=len(checks) - passed_count,
+        leak_summary=leak_summary,
     )
 
 
@@ -432,6 +456,7 @@ def packet_stats_text(stats: PacketStats) -> str:
         f"Characters: {stats.total_characters} total, {stats.approved_context_characters} approved_context\n"
         f"Approx tokens: {stats.approximate_tokens}\n"
         f"Diagnostics: {overall} ({stats.diagnostic_passed_count}/{stats.diagnostic_total} passed, {stats.diagnostic_failed_count} failed)\n"
+        f"Leaks: {stats.leak_summary.total} total\n"
     )
 
 
@@ -455,6 +480,7 @@ def packet_stats_json_text(stats: PacketStats) -> str:
                 "failed": stats.diagnostic_failed_count,
             },
         },
+        "leaks": _leak_summary_json(leak_summary=stats.leak_summary),
     }
     return json.dumps(payload, indent=2) + "\n"
 
@@ -821,6 +847,7 @@ def _diagnostics_report_json_text(
     packet_digest: str,
     passed: bool,
     checks: tuple[DiagnosticCheck, ...],
+    leak_summary: LeakSummary,
 ) -> str:
     passed_count = sum(1 for check in checks if check.passed)
     payload = {
@@ -842,13 +869,21 @@ def _diagnostics_report_json_text(
             }
             for check in checks
         ],
+        "leaks": {
+            "total": leak_summary.total,
+            "counts_by_category": dict(leak_summary.counts_by_category),
+        },
     }
     return json.dumps(payload, indent=2) + "\n"
 
 
-def _packet_diagnostic_checks(packet_input: str | Path) -> tuple[str, str, tuple[DiagnosticCheck, ...]]:
+def _packet_diagnostic_checks(
+    packet_input: str | Path,
+) -> tuple[str, str, tuple[DiagnosticCheck, ...], LeakSummary]:
     packet = read_text(packet_input)
     fields = parse_frontmatter(packet)
+    leak_summary = _packet_leak_summary(packet)
+    leak_counts = dict(leak_summary.counts_by_category)
 
     agent = fields.get("agent", "")
     task = fields.get("task", "")
@@ -895,12 +930,37 @@ def _packet_diagnostic_checks(packet_input: str | Path) -> tuple[str, str, tuple
             ),
             DiagnosticCheck(
                 "no redaction marker leaked",
-                REDACTION_MARKER not in packet,
+                leak_counts["redaction_marker"] == 0,
                 (
                     "redaction marker not found"
-                    if REDACTION_MARKER not in packet
+                    if leak_counts["redaction_marker"] == 0
                     else "redaction marker found"
                 ),
+            ),
+            DiagnosticCheck(
+                "no credential leaks",
+                leak_counts["credential"] == 0,
+                _leak_check_detail("credential", leak_counts["credential"]),
+            ),
+            DiagnosticCheck(
+                "no email leaks",
+                leak_counts["email_address"] == 0,
+                _leak_check_detail("email_address", leak_counts["email_address"]),
+            ),
+            DiagnosticCheck(
+                "no phone-like leaks",
+                leak_counts["phone_like"] == 0,
+                _leak_check_detail("phone_like", leak_counts["phone_like"]),
+            ),
+            DiagnosticCheck(
+                "no long-hex leaks",
+                leak_counts["long_hex"] == 0,
+                _leak_check_detail("long_hex", leak_counts["long_hex"]),
+            ),
+            DiagnosticCheck(
+                "no local-path leaks",
+                leak_counts["local_path"] == 0,
+                _leak_check_detail("local_path", leak_counts["local_path"]),
             ),
             DiagnosticCheck(
                 "context packet heading present",
@@ -960,7 +1020,43 @@ def _packet_diagnostic_checks(packet_input: str | Path) -> tuple[str, str, tuple
             ),
         ]
     )
-    return packet, sha256(packet.encode("utf-8")).hexdigest()[:16], checks
+    return packet, sha256(packet.encode("utf-8")).hexdigest()[:16], checks, leak_summary
+
+
+def _packet_leak_summary(text: str) -> LeakSummary:
+    counts_by_category = (
+        ("credential", len(SECRET_LINE_RE.findall(text))),
+        ("email_address", len(EMAIL_RE.findall(text))),
+        ("phone_like", len(PHONEISH_RE.findall(text))),
+        ("long_hex", len(LONG_HEX_RE.findall(text))),
+        ("local_path", len(LOCAL_PATH_RE.findall(text))),
+        ("redaction_marker", text.count(REDACTION_MARKER)),
+    )
+    total = sum(count for _, count in counts_by_category)
+    return LeakSummary(total=total, counts_by_category=counts_by_category)
+
+
+def _leak_summary_json(leak_summary: LeakSummary) -> dict[str, object]:
+    return {
+        "total": leak_summary.total,
+        "counts_by_category": dict(leak_summary.counts_by_category),
+    }
+
+
+def _leak_check_detail(category: str, count: int) -> str:
+    singular_label = LEAK_CATEGORY_LABELS[category]
+    plural_label = {
+        "credential": "credential-looking values",
+        "email_address": "email addresses",
+        "phone_like": "phone-like identifiers",
+        "long_hex": "long hex strings",
+        "local_path": "local absolute paths",
+        "redaction_marker": f"{REDACTION_MARKER} markers",
+    }[category]
+    if count == 0:
+        return f"no {plural_label} found"
+    label = singular_label if count == 1 else plural_label
+    return f"found {count} {label}"
 
 
 DOCTOR_EXPECTED_ARTIFACTS: tuple[tuple[str, str], ...] = (
@@ -1037,7 +1133,7 @@ def _doctor_checks(root: Path) -> tuple[DiagnosticCheck, ...]:
     packet_path = root / "04-packet.md"
     if packet_path.is_file():
         try:
-            _, _, packet_checks = _packet_diagnostic_checks(packet_path)
+            _, _, packet_checks, _ = _packet_diagnostic_checks(packet_path)
             passed_count = sum(1 for check in packet_checks if check.passed)
             checks.append(
                 DiagnosticCheck(

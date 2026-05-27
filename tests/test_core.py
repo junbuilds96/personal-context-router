@@ -349,7 +349,16 @@ def test_diagnose_packet_writes_passing_json_diagnostics(tmp_path: Path):
     assert data["packet_filename"] == "packet.md"
     assert data["packet_digest"]
     assert data["overall"] == "pass"
-    assert data["counts"] == {"total": 13, "passed": 13, "failed": 0}
+    assert data["counts"] == {"total": 18, "passed": 18, "failed": 0}
+    assert data["leaks"]["total"] == 0
+    assert data["leaks"]["counts_by_category"] == {
+        "credential": 0,
+        "email_address": 0,
+        "phone_like": 0,
+        "long_hex": 0,
+        "local_path": 0,
+        "redaction_marker": 0,
+    }
     assert data["checks"][0] == {
         "name": "frontmatter present",
         "result": "pass",
@@ -417,7 +426,7 @@ def test_diagnose_packet_writes_failing_json_diagnostics(tmp_path: Path):
     assert diagnostics.json_artifact is not None
     data = json.loads(diagnostics.json_artifact.text)
     assert data["overall"] == "fail"
-    assert data["counts"]["total"] == 13
+    assert data["counts"]["total"] == 18
     assert data["counts"]["passed"] < 13
     assert data["counts"]["failed"] > 0
     assert {
@@ -467,7 +476,7 @@ def test_packet_stats_summarizes_packet_without_raw_context(tmp_path: Path):
     )
     assert stats.approximate_tokens == (len(packet.text) + 3) // 4
     assert stats.diagnostic_passed is True
-    assert stats.diagnostic_total == 13
+    assert stats.diagnostic_total == 18
     assert stats.diagnostic_failed_count == 0
     assert raw_context not in text
     assert raw_context not in json_text
@@ -476,7 +485,64 @@ def test_packet_stats_summarizes_packet_without_raw_context(tmp_path: Path):
         "total": len(packet.text),
         "approved_context": stats.approved_context_characters,
     }
-    assert data["diagnostics"]["counts"] == {"total": 13, "passed": 13, "failed": 0}
+    assert data["diagnostics"]["counts"] == {"total": 18, "passed": 18, "failed": 0}
+    assert data["leaks"]["total"] == 0
+    assert data["leaks"]["counts_by_category"] == {
+        "credential": 0,
+        "email_address": 0,
+        "phone_like": 0,
+        "long_hex": 0,
+        "local_path": 0,
+        "redaction_marker": 0,
+    }
+
+
+def test_packet_diagnostics_detects_synthetic_leaks(tmp_path: Path):
+    packet = tmp_path / "packet.md"
+    packet.write_text(
+        "\n".join(
+            [
+                "---",
+                "type: context_packet",
+                "agent: qa-agent",
+                "task: inspect synthetic leaks",
+                "approved_digest: abcdef1234567890",
+                "---",
+                "",
+                "# Context Packet",
+                "",
+                "Agent: qa-agent",
+                "Task: inspect synthetic leaks",
+                "Approved source digest: abcdef1234567890",
+                "",
+                "## Scope",
+                "- Use this packet only for the named task.",
+                "",
+                "## Approved Context",
+                "- api_key = synthetic-demo-value",
+                "- contact synthetic@example.test",
+                "- phone +1 555 010 9999",
+                "- hex 0123456789abcdef0123456789abcdef",
+                "- unix path /home/demo/project",
+                r"- windows path C:\Users\demo\project",
+                "- marker [REDACTED]",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    diagnostics = diagnose_packet(packet, tmp_path / "diagnostics.md", tmp_path / "diagnostics.json")
+
+    assert diagnostics.passed is False
+    data = json.loads((tmp_path / "diagnostics.json").read_text(encoding="utf-8"))
+    counts = data["leaks"]["counts_by_category"]
+    assert data["leaks"]["total"] >= 6
+    assert counts["credential"] >= 1
+    assert counts["email_address"] >= 1
+    assert counts["phone_like"] >= 1
+    assert counts["long_hex"] >= 1
+    assert counts["local_path"] >= 2
+    assert counts["redaction_marker"] >= 1
 
 
 def test_packet_stats_rejects_non_packet_input(tmp_path: Path):
@@ -554,7 +620,7 @@ def test_doctor_workdir_passes_run_sample_workdir(tmp_path: Path):
     assert "**Overall:** pass" in result.report_text
     assert "| artifact exists: 05-diagnostics.md | PASS | found |" in result.report_text
     assert "| artifact type: 08-decision.md | PASS | type=routing_decision |" in result.report_text
-    assert "| packet diagnostics pass | PASS | 13/13 packet checks passed |" in result.report_text
+    assert "| packet diagnostics pass | PASS | 18/18 packet checks passed |" in result.report_text
     assert "| handoff leak scan: 04-packet.md | PASS | no obvious leaks found |" in result.report_text
 
 
@@ -862,7 +928,7 @@ def test_cli_stats_prints_safe_text_summary(tmp_path: Path):
     assert "Task: verify stats command output\n" in result.stdout
     assert "Characters:" in result.stdout
     assert "Approx tokens:" in result.stdout
-    assert "Diagnostics: pass (13/13 passed, 0 failed)\n" in result.stdout
+    assert "Diagnostics: pass (18/18 passed, 0 failed)\n" in result.stdout
     assert raw_context not in result.stdout
 
 
@@ -915,7 +981,7 @@ def test_cli_stats_prints_safe_json_only(tmp_path: Path):
     assert data["characters"]["total"] == len(packet.text)
     assert data["approximate_tokens"] == (len(packet.text) + 3) // 4
     assert data["diagnostics"]["overall"] == "pass"
-    assert data["diagnostics"]["counts"] == {"total": 13, "passed": 13, "failed": 0}
+    assert data["diagnostics"]["counts"] == {"total": 18, "passed": 18, "failed": 0}
     assert raw_context not in result.stdout
 
 
