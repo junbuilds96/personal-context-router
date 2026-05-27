@@ -20,6 +20,8 @@ git clone https://github.com/junbuilds96/personal-context-router.git
 cd personal-context-router
 python -m pip install -e ".[dev]"
 
+pcr init .pcr-workspace
+
 PCR_DEMO="$(mktemp -d)"
 pcr run-sample --workdir "$PCR_DEMO"
 pcr doctor "$PCR_DEMO" --out "$PCR_DEMO/doctor.md" --json-out "$PCR_DEMO/doctor.json"
@@ -139,6 +141,7 @@ safety policy.
 
 ## Commands
 
+- `pcr init WORKDIR [--force]`
 - `pcr redact INPUT --out OUTPUT`
 - `pcr extract REDACTED_INPUT --source SOURCE --out SIGNALS_OUTPUT`
 - `pcr approve SIGNALS_INPUT (--approve-all|--select INDEXES|--reject INDEXES) --out APPROVED_OUTPUT`

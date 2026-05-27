@@ -13,6 +13,18 @@ pcr --help
 python -m personal_context_router --help
 ```
 
+Initialize a safe local workspace:
+
+```bash
+pcr init .pcr-workspace
+```
+
+`pcr init WORKDIR [--force]` creates the local PCR directory layout, a
+`raw/.gitignore` that ignores raw inputs by default, `sources/README.md`, and
+minimal safe policy files under `policies/`. It skips matching files on repeat
+runs and refuses to overwrite existing non-empty files unless `--force` is
+used.
+
 Run the full synthetic demo:
 
 ```bash

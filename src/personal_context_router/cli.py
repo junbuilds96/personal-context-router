@@ -13,6 +13,7 @@ from .core import (
     InvalidPipelineInput,
     PacketStats,
     RouteResult,
+    WorkspaceInitResult,
     approve_signals,
     create_packet,
     create_request,
@@ -20,6 +21,7 @@ from .core import (
     diagnose_packet,
     doctor_workdir,
     extract_signals,
+    init_workspace,
     packet_stats,
     packet_stats_json_text,
     packet_stats_text,
@@ -38,9 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands = parser.add_subparsers(
         dest="command",
-        metavar="{redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}",
+        metavar="{init,redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}",
         required=True,
     )
+
+    init = subcommands.add_parser("init", help="Scaffold a safe local PCR workspace.")
+    init.add_argument("workdir", metavar="WORKDIR")
+    init.add_argument("--force", action="store_true", help="Overwrite existing scaffold files.")
+    init.set_defaults(func=_cmd_init)
 
     redact = subcommands.add_parser("redact", help="Redact obvious sensitive values from an input note.")
     redact.add_argument("input", metavar="INPUT")
@@ -138,6 +145,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Wrote demo artifacts:")
         for item in artifact:
             print(f"- {item.path}")
+    elif isinstance(artifact, WorkspaceInitResult):
+        print(f"Initialized workspace: {artifact.workdir}")
+        if artifact.created_paths:
+            print("Created paths:")
+            for path in artifact.created_paths:
+                print(f"- {path}")
+        else:
+            print("Created paths: none; workspace already initialized.")
+        print(f"Next: {artifact.next_hint}")
     elif isinstance(artifact, RouteResult):
         print("Wrote route artifacts:")
         for item in artifact.artifacts:
@@ -168,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_redact(args: argparse.Namespace):
     return redact_file(args.input, args.out)
+
+
+def _cmd_init(args: argparse.Namespace):
+    return init_workspace(args.workdir, force=args.force)
 
 
 def _cmd_extract(args: argparse.Namespace):

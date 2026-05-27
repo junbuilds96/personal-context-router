@@ -19,6 +19,7 @@ from personal_context_router.core import (
     diagnose_packet,
     doctor_workdir,
     extract_signals,
+    init_workspace,
     packet_stats,
     packet_stats_json_text,
     packet_stats_text,
@@ -28,6 +29,13 @@ from personal_context_router.core import (
     run_sample,
     serialize_context_packet_json,
 )
+
+
+def _cli_env() -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    return env
 
 
 def test_redaction_handles_common_sensitive_patterns():
@@ -584,6 +592,70 @@ def test_extract_signals_skips_redacted_lines_and_section_labels(tmp_path: Path)
     assert "- cli-agent needs command examples." in signals.text
 
 
+def test_init_workspace_creates_safe_layout_and_raw_ignore(tmp_path: Path):
+    result = init_workspace(tmp_path / "workspace")
+
+    expected_dirs = [
+        "raw",
+        "processed/redacted",
+        "processed/summaries",
+        "context/signals",
+        "context/agent-briefs",
+        "ledger/writebacks",
+        "ledger/context-requests",
+        "policies",
+        "schemas",
+        "sources",
+    ]
+    for relative in expected_dirs:
+        assert (tmp_path / "workspace" / relative).is_dir()
+
+    raw_ignore = tmp_path / "workspace" / "raw" / ".gitignore"
+    assert raw_ignore.read_text(encoding="utf-8") == "*\n!.gitignore\n"
+    sources_readme = (tmp_path / "workspace" / "sources" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "synthetic examples and manually imported source notes" in sources_readme
+    assert "Do not commit raw private data" in sources_readme
+    assert "require_explicit_approval_before_packet: true" in (
+        tmp_path / "workspace" / "policies" / "privacy.yml"
+    ).read_text(encoding="utf-8")
+    assert raw_ignore in result.created_paths
+    assert result.next_hint.startswith("pcr route ")
+
+
+def test_init_workspace_is_idempotent_for_matching_files(tmp_path: Path):
+    first = init_workspace(tmp_path)
+    second = init_workspace(tmp_path)
+
+    assert first.created_paths
+    assert second.created_paths == ()
+    assert tmp_path / "raw" / ".gitignore" in second.unchanged_paths
+    assert (tmp_path / "raw" / ".gitignore").read_text(encoding="utf-8") == "*\n!.gitignore\n"
+
+
+def test_init_workspace_refuses_conflicting_non_empty_file(tmp_path: Path):
+    privacy = tmp_path / "policies" / "privacy.yml"
+    privacy.parent.mkdir(parents=True)
+    privacy.write_text("custom: keep-me\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Refusing to overwrite existing non-empty file"):
+        init_workspace(tmp_path)
+
+    assert privacy.read_text(encoding="utf-8") == "custom: keep-me\n"
+
+
+def test_init_workspace_force_overwrites_conflicting_file(tmp_path: Path):
+    routing = tmp_path / "policies" / "routing.yml"
+    routing.parent.mkdir(parents=True)
+    routing.write_text("custom: replace-me\n", encoding="utf-8")
+
+    result = init_workspace(tmp_path, force=True)
+
+    assert "schema: pcr.policy.routing.v1" in routing.read_text(encoding="utf-8")
+    assert routing in result.created_paths
+
+
 def test_run_sample_creates_complete_demo(tmp_path: Path):
     artifacts = run_sample(tmp_path)
 
@@ -680,6 +752,32 @@ def test_doctor_workdir_fails_missing_artifact_and_handoff_leak(tmp_path: Path):
     assert result.passed is False
     assert "| artifact exists: 06-request.md | FAIL | missing |" in result.report_text
     assert "| handoff leak scan: 04-packet.md | FAIL | found email address |" in result.report_text
+
+
+def test_cli_init_prints_created_paths_and_next_hint(tmp_path: Path):
+    workdir = tmp_path / "workspace"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "init",
+            str(workdir),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=_cli_env(),
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert f"Initialized workspace: {workdir}" in result.stdout
+    assert "Created paths:" in result.stdout
+    assert f"- {workdir / 'raw' / '.gitignore'}" in result.stdout
+    assert "Next: pcr route path/to/note.md" in result.stdout
+    assert (workdir / "raw" / ".gitignore").read_text(encoding="utf-8") == "*\n!.gitignore\n"
 
 
 def test_cli_approve_gate_fails_nonzero(tmp_path: Path):
@@ -1346,7 +1444,8 @@ def test_cli_help_lists_diagnose_not_legacy_aliases():
     )
 
     assert result.returncode == 0
-    assert "{redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
+    assert "{init,redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
+    assert "init              " in result.stdout
     assert "diagnose" in result.stdout
     assert "doctor" in result.stdout
     assert "Print a safe context packet size and shape summary." in result.stdout
@@ -1381,7 +1480,7 @@ def test_package_module_help_matches_cli_entrypoint():
 
     assert result.returncode == 0
     assert "usage: pcr" in result.stdout
-    assert "{redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
+    assert "{init,redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
     assert "Personal context, routed safely." in result.stdout
 
 

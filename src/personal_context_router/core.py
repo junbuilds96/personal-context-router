@@ -71,6 +71,14 @@ class Artifact:
 
 
 @dataclass(frozen=True)
+class WorkspaceInitResult:
+    workdir: Path
+    created_paths: tuple[Path, ...]
+    unchanged_paths: tuple[Path, ...]
+    next_hint: str
+
+
+@dataclass(frozen=True)
 class DiagnosticCheck:
     name: str
     passed: bool
@@ -136,6 +144,128 @@ def write_text(path: str | Path, text: str) -> Artifact:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
     return Artifact(output_path, text)
+
+
+WORKSPACE_DIRECTORIES = (
+    "raw",
+    "processed/redacted",
+    "processed/summaries",
+    "context/signals",
+    "context/agent-briefs",
+    "ledger/writebacks",
+    "ledger/context-requests",
+    "policies",
+    "schemas",
+    "sources",
+)
+
+WORKSPACE_FILES = {
+    "raw/.gitignore": "*\n!.gitignore\n",
+    "sources/README.md": """\
+# Sources
+
+Use this directory for synthetic examples and manually imported source notes
+that are safe to review.
+
+Do not commit raw private data, credentials, customer data, private chats, or
+personal contact details. Keep raw private inputs outside the repository, or in
+`raw/`, which is ignored by default.
+""",
+    "policies/privacy.yml": """\
+schema: pcr.policy.privacy.v1
+defaults:
+  raw_private_data: local_only
+  require_redaction_before_signals: true
+  require_explicit_approval_before_packet: true
+  outbound_raw_data: deny
+  review_before_sharing: true
+""",
+    "policies/routing.yml": """\
+schema: pcr.policy.routing.v1
+defaults:
+  packet_scope: one_agent_one_task
+  allow_scope_expansion_without_approval: false
+  require_diagnostics_pass: true
+  include_only_approved_context: true
+""",
+    "policies/retention.yml": """\
+schema: pcr.policy.retention.v1
+defaults:
+  raw_inputs: do_not_commit
+  redacted_artifacts: keep_until_no_longer_needed
+  approved_packets: keep_for_audit
+  delete_unneeded_private_material: true
+""",
+    "policies/agents.yml": """\
+schema: pcr.policy.agents.v1
+defaults:
+  agents_receive_raw_inputs: false
+  agents_receive_only_task_scoped_packets: true
+  writebacks_must_not_add_raw_private_context: true
+  request_more_context_when_insufficient: true
+""",
+}
+
+
+def init_workspace(workdir: str | Path, force: bool = False) -> WorkspaceInitResult:
+    root = Path(workdir)
+    if root.exists() and not root.is_dir():
+        raise ValueError(
+            f"Refusing to initialize workspace because WORKDIR is not a directory: {root}"
+        )
+
+    created_paths: list[Path] = []
+    unchanged_paths: list[Path] = []
+
+    for relative_dir in WORKSPACE_DIRECTORIES:
+        path = root / relative_dir
+        if path.exists():
+            if not path.is_dir():
+                raise ValueError(f"Refusing to replace existing non-directory path: {path}")
+            unchanged_paths.append(path)
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+        created_paths.append(path)
+
+    for relative_file, text in WORKSPACE_FILES.items():
+        path = root / relative_file
+        written = _write_workspace_file(path, text, force=force)
+        if written:
+            created_paths.append(path)
+        else:
+            unchanged_paths.append(path)
+
+    return WorkspaceInitResult(
+        workdir=root,
+        created_paths=tuple(created_paths),
+        unchanged_paths=tuple(unchanged_paths),
+        next_hint=f"pcr route path/to/note.md --source manual-import --agent AGENT --task TASK --workdir {root} --approve-all",
+    )
+
+
+def _write_workspace_file(path: Path, text: str, force: bool) -> bool:
+    if path.exists():
+        if not path.is_file():
+            raise ValueError(f"Refusing to replace existing non-file path: {path}")
+        if path.stat().st_size == 0:
+            existing = ""
+        else:
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                if not force:
+                    raise ValueError(
+                        f"Refusing to overwrite existing non-empty file: {path}"
+                    ) from exc
+                existing = None
+        if existing == text:
+            return False
+        if existing and not force:
+            raise ValueError(f"Refusing to overwrite existing non-empty file: {path}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
 
 
 def frontmatter(kind: str, **fields: str) -> str:
