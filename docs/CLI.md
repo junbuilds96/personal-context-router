@@ -21,6 +21,19 @@ pcr run-sample --workdir "$PCR_DEMO"
 pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md" --json-out "$PCR_DEMO/04-diagnostics.json"
 ```
 
+Run the real-input one-command route pipeline:
+
+```bash
+PCR_ROUTE="$(mktemp -d)"
+pcr route path/to/note.md --source local-note --agent docs-agent --task "draft a README quickstart" --workdir "$PCR_ROUTE" --approve-all --json-out "$PCR_ROUTE/04-packet.json" --diagnostics-json-out "$PCR_ROUTE/05-diagnostics.json"
+```
+
+`pcr route` writes numbered Markdown artifacts in the workdir:
+`01-redacted.md`, `02-signals.md`, `03-approved.md`, `04-packet.md`,
+`05-diagnostics.md`, and, when diagnostics pass, `06-request.md`. It uses the
+same explicit approval gate as `pcr approve` and refuses to run without
+`--approve-all`, `--select`, or `--reject`.
+
 Run the pipeline manually:
 
 ```bash

@@ -716,6 +716,218 @@ def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
     assert json.loads(json_report.read_text(encoding="utf-8"))["overall"] == "fail"
 
 
+def test_cli_route_success_writes_pipeline_artifacts_and_json(tmp_path: Path):
+    note = tmp_path / "note.md"
+    workdir = tmp_path / "route"
+    packet_json = tmp_path / "packet.json"
+    diagnostics_json = tmp_path / "diagnostics.json"
+    note.write_text(
+        "\n".join(
+            [
+                "Goal: build the route command.",
+                "docs-agent needs a concise CLI example.",
+                "Contact: route-demo@example.test",
+                "api_key = fake-value",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "route",
+            str(note),
+            "--source",
+            "unit-route-note",
+            "--agent",
+            "docs-agent",
+            "--task",
+            "draft route command docs",
+            "--workdir",
+            str(workdir),
+            "--approve-all",
+            "--json-out",
+            str(packet_json),
+            "--diagnostics-json-out",
+            str(diagnostics_json),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert "Wrote route artifacts:" in result.stdout
+    assert "Diagnostics: pass" in result.stdout
+    assert [path.name for path in sorted(workdir.iterdir())] == [
+        "01-redacted.md",
+        "02-signals.md",
+        "03-approved.md",
+        "04-packet.md",
+        "05-diagnostics.md",
+        "06-request.md",
+    ]
+    packet = (workdir / "04-packet.md").read_text(encoding="utf-8")
+    assert "type: context_packet" in packet
+    assert "agent: docs-agent" in packet
+    assert "route-demo@example.test" not in packet
+    assert "fake-value" not in packet
+    assert "[REDACTED]" not in packet
+    assert json.loads(packet_json.read_text(encoding="utf-8"))["schema"] == "pcr.context_packet.v1"
+    assert json.loads(diagnostics_json.read_text(encoding="utf-8"))["overall"] == "pass"
+
+
+def test_cli_route_diagnostics_failure_does_not_write_request(tmp_path: Path):
+    note = tmp_path / "note.md"
+    workdir = tmp_path / "route"
+    note.write_text(
+        "\n".join(
+            [
+                "Goal: build the route command.",
+                "Should docs-agent email route-demo@example.test?",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "route",
+            str(note),
+            "--source",
+            "unit-route-note",
+            "--agent",
+            "docs-agent",
+            "--task",
+            "draft route command docs",
+            "--workdir",
+            str(workdir),
+            "--approve-all",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert "Wrote route artifacts:" in result.stdout
+    assert "Diagnostics: fail" in result.stdout
+    assert "06-request.md" not in result.stdout
+    assert [path.name for path in sorted(workdir.iterdir())] == [
+        "01-redacted.md",
+        "02-signals.md",
+        "03-approved.md",
+        "04-packet.md",
+        "05-diagnostics.md",
+    ]
+    packet = (workdir / "04-packet.md").read_text(encoding="utf-8")
+    diagnostics = (workdir / "05-diagnostics.md").read_text(encoding="utf-8")
+    assert "[REDACTED]" in packet
+    assert "overall: fail" in diagnostics
+    assert "| no [REDACTED] marker leaked | FAIL | [REDACTED] marker found |" in diagnostics
+    assert not (workdir / "06-request.md").exists()
+
+
+def test_cli_route_requires_explicit_approval_before_writing_artifacts(tmp_path: Path):
+    note = tmp_path / "note.md"
+    workdir = tmp_path / "route"
+    note.write_text("Goal: build the route command.\n", encoding="utf-8")
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "route",
+            str(note),
+            "--source",
+            "unit-route-note",
+            "--agent",
+            "docs-agent",
+            "--task",
+            "draft route command docs",
+            "--workdir",
+            str(workdir),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 2
+    assert "--approve-all" in result.stderr
+    assert "--select" in result.stderr
+    assert "--reject" in result.stderr
+    assert not workdir.exists()
+
+
+def test_cli_route_select_writes_subset_packet(tmp_path: Path):
+    note = tmp_path / "note.md"
+    workdir = tmp_path / "route"
+    note.write_text(
+        "\n".join(
+            [
+                "Goal: keep selected route context.",
+                "Goal: drop unselected route context.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "route",
+            str(note),
+            "--source",
+            "unit-route-note",
+            "--agent",
+            "qa-agent",
+            "--task",
+            "verify selected route context",
+            "--workdir",
+            str(workdir),
+            "--select",
+            "3",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    approved = (workdir / "03-approved.md").read_text(encoding="utf-8")
+    packet = (workdir / "04-packet.md").read_text(encoding="utf-8")
+    assert result.returncode == 0
+    assert "approval: select" in approved
+    assert "Selected indexes: 3" in approved
+    assert "- Goal: keep selected route context." in packet
+    assert "- Goal: drop unselected route context." not in packet
+
+
 def test_cli_help_lists_diagnose_not_legacy_aliases():
     env = os.environ.copy()
     src_path = str(Path(__file__).resolve().parents[1] / "src")
@@ -735,7 +947,7 @@ def test_cli_help_lists_diagnose_not_legacy_aliases():
     )
 
     assert result.returncode == 0
-    assert "{redact,extract,approve,packet,diagnose,request,writeback,run-sample}" in result.stdout
+    assert "{redact,extract,approve,packet,diagnose,request,writeback,route,run-sample}" in result.stdout
     assert "diagnose" in result.stdout
     assert "Validate a context packet and write diagnostics." in result.stdout
     assert "{redact,extract,approve,packet,inspect,request,writeback,run-sample}" not in result.stdout
@@ -765,7 +977,7 @@ def test_package_module_help_matches_cli_entrypoint():
 
     assert result.returncode == 0
     assert "usage: pcr" in result.stdout
-    assert "{redact,extract,approve,packet,diagnose,request,writeback,run-sample}" in result.stdout
+    assert "{redact,extract,approve,packet,diagnose,request,writeback,route,run-sample}" in result.stdout
     assert "Personal context, routed safely." in result.stdout
 
 

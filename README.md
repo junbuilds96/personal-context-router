@@ -89,6 +89,14 @@ scope sanity. Failed diagnostics exit nonzero after writing the report.
 
 ## Manual Workflow
 
+For a real input note, `route` runs the same redacted, approved, diagnostic
+pipeline in one command:
+
+```bash
+PCR_ROUTE="$(mktemp -d)"
+pcr route path/to/note.md --source local-note --agent docs-agent --task "draft a README quickstart" --workdir "$PCR_ROUTE" --approve-all --json-out "$PCR_ROUTE/04-packet.json" --diagnostics-json-out "$PCR_ROUTE/05-diagnostics.json"
+```
+
 ```bash
 PCR_DEMO="$(mktemp -d)"
 
@@ -137,6 +145,7 @@ safety policy.
 - `pcr diagnose PACKET_INPUT --out DIAGNOSTICS_OUTPUT [--json-out JSON_OUTPUT]`
 - `pcr request PACKET_INPUT --out REQUEST_OUTPUT`
 - `pcr writeback REQUEST_INPUT --out WRITEBACK_OUTPUT --status sufficient|insufficient --note TEXT [--decision-out PATH]`
+- `pcr route INPUT --source SOURCE --agent AGENT --task TASK --workdir DIR (--approve-all|--select INDEXES|--reject INDEXES) [--json-out JSON_OUTPUT] [--diagnostics-json-out JSON_OUTPUT]`
 - `pcr run-sample --workdir DIR`
 
 Module form also works:

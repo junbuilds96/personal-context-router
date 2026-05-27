@@ -69,6 +69,12 @@ class DiagnosticResult:
     json_artifact: Artifact | None = None
 
 
+@dataclass(frozen=True)
+class RouteResult:
+    artifacts: tuple[Artifact, ...]
+    diagnostics: DiagnosticResult
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -194,15 +200,7 @@ def approve_signals(
     select: str | None = None,
     reject: str | None = None,
 ) -> Artifact:
-    approval_options = sum(
-        1 for option in (approve_all, select is not None, reject is not None) if option
-    )
-    if approval_options == 0:
-        raise ApprovalRequired(
-            "Refusing to approve signals without --approve-all, --select, or --reject."
-        )
-    if approval_options > 1:
-        raise ValueError("--approve-all, --select, and --reject are mutually exclusive.")
+    _validate_approval_options(approve_all, select, reject)
 
     signals = read_text(signals_input)
     signal_items = _selectable_signal_items(signals)
@@ -605,6 +603,74 @@ def run_sample(workdir: str | Path, sample_path: str | Path | None = None) -> li
         )
     )
     return artifacts
+
+
+def run_route(
+    input_path: str | Path,
+    source: str,
+    agent: str,
+    task: str,
+    workdir: str | Path,
+    approve_all: bool,
+    select: str | None = None,
+    reject: str | None = None,
+    json_output_path: str | Path | None = None,
+    diagnostics_json_output_path: str | Path | None = None,
+) -> RouteResult:
+    _validate_approval_options(approve_all, select, reject)
+
+    root = Path(workdir)
+    root.mkdir(parents=True, exist_ok=True)
+
+    redacted = redact_file(input_path, root / "01-redacted.md")
+    signals = extract_signals(redacted.path, source, root / "02-signals.md")
+    approved = approve_signals(
+        signals.path,
+        root / "03-approved.md",
+        approve_all=approve_all,
+        select=select,
+        reject=reject,
+    )
+    packet = create_packet(
+        approved.path,
+        agent=agent,
+        task=task,
+        output_path=root / "04-packet.md",
+        json_output_path=json_output_path,
+    )
+    diagnostics = diagnose_packet(
+        packet.path,
+        root / "05-diagnostics.md",
+        diagnostics_json_output_path,
+    )
+    if not diagnostics.passed:
+        return RouteResult(
+            artifacts=(redacted, signals, approved, packet, diagnostics.artifact),
+            diagnostics=diagnostics,
+        )
+
+    request = create_request(packet.path, root / "06-request.md")
+
+    return RouteResult(
+        artifacts=(redacted, signals, approved, packet, diagnostics.artifact, request),
+        diagnostics=diagnostics,
+    )
+
+
+def _validate_approval_options(
+    approve_all: bool,
+    select: str | None,
+    reject: str | None,
+) -> None:
+    approval_options = sum(
+        1 for option in (approve_all, select is not None, reject is not None) if option
+    )
+    if approval_options == 0:
+        raise ApprovalRequired(
+            "Refusing to approve signals without --approve-all, --select, or --reject."
+        )
+    if approval_options > 1:
+        raise ValueError("--approve-all, --select, and --reject are mutually exclusive.")
 
 
 def _selectable_signal_items(signals: str) -> tuple[str, ...]:

@@ -10,6 +10,7 @@ from .core import (
     ApprovalRequired,
     DiagnosticResult,
     InvalidPipelineInput,
+    RouteResult,
     approve_signals,
     create_packet,
     create_request,
@@ -17,6 +18,7 @@ from .core import (
     diagnose_packet,
     extract_signals,
     redact_file,
+    run_route,
     run_sample,
 )
 
@@ -30,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands = parser.add_subparsers(
         dest="command",
-        metavar="{redact,extract,approve,packet,diagnose,request,writeback,run-sample}",
+        metavar="{redact,extract,approve,packet,diagnose,request,writeback,route,run-sample}",
         required=True,
     )
 
@@ -86,6 +88,20 @@ def build_parser() -> argparse.ArgumentParser:
     writeback.add_argument("--decision-out", metavar="PATH")
     writeback.set_defaults(func=_cmd_writeback)
 
+    route = subcommands.add_parser("route", help="Run the redacted one-command route pipeline.")
+    route.add_argument("input", metavar="INPUT")
+    route.add_argument("--source", required=True, metavar="SOURCE")
+    route.add_argument("--agent", required=True, metavar="AGENT")
+    route.add_argument("--task", required=True, metavar="TASK")
+    route.add_argument("--workdir", required=True, metavar="DIR")
+    route_approval = route.add_mutually_exclusive_group()
+    route_approval.add_argument("--approve-all", action="store_true", help="Approve all selectable signal bullets.")
+    route_approval.add_argument("--select", metavar="INDEXES", help="Approve only comma-separated signal indexes.")
+    route_approval.add_argument("--reject", metavar="INDEXES", help="Approve all signal indexes except these.")
+    route.add_argument("--json-out", metavar="JSON_OUTPUT")
+    route.add_argument("--diagnostics-json-out", metavar="JSON_OUTPUT")
+    route.set_defaults(func=_cmd_route)
+
     sample = subcommands.add_parser("run-sample", help="Run the complete synthetic demo workflow.")
     sample.add_argument("--workdir", required=True, metavar="DIR")
     sample.set_defaults(func=_cmd_run_sample)
@@ -105,6 +121,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Wrote demo artifacts:")
         for item in artifact:
             print(f"- {item.path}")
+    elif isinstance(artifact, RouteResult):
+        print("Wrote route artifacts:")
+        for item in artifact.artifacts:
+            print(f"- {item.path}")
+        print(f"Diagnostics: {'pass' if artifact.diagnostics.passed else 'fail'}")
+        return 0 if artifact.diagnostics.passed else 1
     elif isinstance(artifact, DiagnosticResult):
         print(f"Wrote {artifact.artifact.path}")
         print(f"Diagnostics: {'pass' if artifact.passed else 'fail'}")
@@ -170,6 +192,21 @@ def _cmd_writeback(args: argparse.Namespace):
         status=args.status,
         note=args.note,
         decision_out=args.decision_out,
+    )
+
+
+def _cmd_route(args: argparse.Namespace):
+    return run_route(
+        args.input,
+        source=args.source,
+        agent=args.agent,
+        task=args.task,
+        workdir=args.workdir,
+        approve_all=args.approve_all,
+        select=args.select,
+        reject=args.reject,
+        json_output_path=args.json_out,
+        diagnostics_json_output_path=args.diagnostics_json_out,
     )
 
 
