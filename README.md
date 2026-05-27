@@ -22,7 +22,7 @@ python -m pip install -e ".[dev]"
 
 PCR_DEMO="$(mktemp -d)"
 pcr run-sample --workdir "$PCR_DEMO"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md" --json-out "$PCR_DEMO/04-diagnostics.json"
+pcr doctor "$PCR_DEMO" --out "$PCR_DEMO/doctor.md" --json-out "$PCR_DEMO/doctor.json"
 ```
 
 ```text
@@ -46,8 +46,8 @@ api_key = demo_key_that_should_not_ship
 docs-agent needs a concise README explanation.
 ```
 
-After `pcr run-sample` and `pcr diagnose`, the agent gets a scoped packet and
-an auditable diagnostics report:
+After `pcr run-sample` and `pcr doctor`, the agent gets a scoped packet and a
+workspace-level pass/fail report:
 
 ```text
 Agent: demo-agent
@@ -66,8 +66,8 @@ You get reviewable Markdown artifacts:
 ```bash
 find "$PCR_DEMO" -maxdepth 1 -type f -exec basename {} \; | sort
 sed -n '1,120p' "$PCR_DEMO/04-packet.md"
-sed -n '1,120p' "$PCR_DEMO/04-diagnostics.md"
-sed -n '1,120p' "$PCR_DEMO/06-writeback.md"
+sed -n '1,120p' "$PCR_DEMO/05-diagnostics.md"
+sed -n '1,120p' "$PCR_DEMO/07-writeback.md"
 ```
 
 The packet is scoped to one agent and task. The diagnostic report checks packet
@@ -104,9 +104,9 @@ pcr redact examples/sample-note.md --out "$PCR_DEMO/01-redacted.md"
 pcr extract "$PCR_DEMO/01-redacted.md" --source synthetic-sample-note --out "$PCR_DEMO/02-signals.md"
 pcr approve "$PCR_DEMO/02-signals.md" --approve-all --out "$PCR_DEMO/03-approved.md"
 pcr packet "$PCR_DEMO/03-approved.md" --agent docs-agent --task "draft a README quickstart" --out "$PCR_DEMO/04-packet.md" --json-out "$PCR_DEMO/04-packet.json"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md"
-pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-request.md"
-pcr writeback "$PCR_DEMO/05-request.md" --out "$PCR_DEMO/06-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/07-decision.md"
+pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-diagnostics.md"
+pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/06-request.md"
+pcr writeback "$PCR_DEMO/06-request.md" --out "$PCR_DEMO/07-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/08-decision.md"
 ```
 
 To approve only selected signal bullets, use comma-separated 1-based indexes:
@@ -143,6 +143,7 @@ safety policy.
 - `pcr approve SIGNALS_INPUT (--approve-all|--select INDEXES|--reject INDEXES) --out APPROVED_OUTPUT`
 - `pcr packet APPROVED_INPUT --agent AGENT --task TASK --out PACKET_OUTPUT [--json-out JSON_OUTPUT]`
 - `pcr diagnose PACKET_INPUT --out DIAGNOSTICS_OUTPUT [--json-out JSON_OUTPUT]`
+- `pcr doctor WORKDIR [--out REPORT] [--json-out JSON]`
 - `pcr request PACKET_INPUT --out REQUEST_OUTPUT`
 - `pcr writeback REQUEST_INPUT --out WRITEBACK_OUTPUT --status sufficient|insufficient --note TEXT [--decision-out PATH]`
 - `pcr route INPUT --source SOURCE --agent AGENT --task TASK --workdir DIR (--approve-all|--select INDEXES|--reject INDEXES) [--json-out JSON_OUTPUT] [--diagnostics-json-out JSON_OUTPUT]`

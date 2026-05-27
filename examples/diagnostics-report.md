@@ -30,7 +30,7 @@ overall: pass
 | task is scoped | PASS | task is scoped |
 | approved_digest is present and formatted | PASS | approved_digest is a 16-character lowercase hex digest |
 | body digest matches frontmatter | PASS | body records the approved_digest |
-| no [REDACTED] marker leaked | PASS | [REDACTED] marker not found |
+| no redaction marker leaked | PASS | redaction marker not found |
 | context packet heading present | PASS | # Context Packet heading found |
 | scope section present | PASS | ## Scope heading found |
 | scope section has guardrails | PASS | scope section includes approval guardrails |

@@ -67,7 +67,7 @@ reviewable.
 | artifact type is context_packet | PASS | type=context_packet |
 | task is scoped | PASS | task is scoped |
 | approved_digest is present and formatted | PASS | approved_digest is a 16-character lowercase hex digest |
-| no [REDACTED] marker leaked | PASS | [REDACTED] marker not found |
+| no redaction marker leaked | PASS | redaction marker not found |
 | approved context is not empty | PASS | approved context has content |
 ```
 

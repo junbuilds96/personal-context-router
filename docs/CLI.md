@@ -18,7 +18,7 @@ Run the full synthetic demo:
 ```bash
 PCR_DEMO="$(mktemp -d)"
 pcr run-sample --workdir "$PCR_DEMO"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md" --json-out "$PCR_DEMO/04-diagnostics.json"
+pcr doctor "$PCR_DEMO" --out "$PCR_DEMO/doctor.md" --json-out "$PCR_DEMO/doctor.json"
 ```
 
 Run the real-input one-command route pipeline:
@@ -43,9 +43,9 @@ pcr redact examples/sample-note.md --out "$PCR_DEMO/01-redacted.md"
 pcr extract "$PCR_DEMO/01-redacted.md" --source synthetic-sample-note --out "$PCR_DEMO/02-signals.md"
 pcr approve "$PCR_DEMO/02-signals.md" --approve-all --out "$PCR_DEMO/03-approved.md"
 pcr packet "$PCR_DEMO/03-approved.md" --agent docs-agent --task "draft a README quickstart" --out "$PCR_DEMO/04-packet.md" --json-out "$PCR_DEMO/04-packet.json"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md" --json-out "$PCR_DEMO/04-diagnostics.json"
-pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-request.md"
-pcr writeback "$PCR_DEMO/05-request.md" --out "$PCR_DEMO/06-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/07-decision.md"
+pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-diagnostics.md" --json-out "$PCR_DEMO/05-diagnostics.json"
+pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/06-request.md"
+pcr writeback "$PCR_DEMO/06-request.md" --out "$PCR_DEMO/07-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/08-decision.md"
 ```
 
 `pcr approve` treats signal bullet lines as 1-based selectable items. Use
@@ -82,3 +82,12 @@ Current checks cover:
 - body digest consistency
 - absence of leaked `[REDACTED]` markers
 - required `Context Packet`, `Scope`, and `Approved Context` sections
+
+`pcr doctor WORKDIR` validates a generated `run-sample` or `route` workdir. It
+checks numbered artifact presence and frontmatter types, reruns packet
+diagnostic checks without rewriting `05-diagnostics.md`, and scans handoff
+artifacts for obvious leaked emails, phone-like values, long hex strings,
+credential-looking assignment lines, and final `[REDACTED]` markers. It prints
+a Markdown report to stdout by default, or writes `--out REPORT` and optional
+`--json-out JSON` with schema `pcr.doctor.v1`. It exits `0` on pass and `1` on
+fail.

@@ -10,7 +10,7 @@ python -m pip install -e ".[dev]"
 
 PCR_DEMO="$(mktemp -d)"
 pcr run-sample --workdir "$PCR_DEMO"
-pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/04-diagnostics.md"
+pcr doctor "$PCR_DEMO" --out "$PCR_DEMO/doctor.md"
 ```
 
 List the generated artifacts:
@@ -25,11 +25,12 @@ Expected artifacts:
 01-redacted.md
 02-signals.md
 03-approved.md
-04-diagnostics.md
 04-packet.md
-05-request.md
-06-writeback.md
-07-decision.md
+05-diagnostics.md
+06-request.md
+07-writeback.md
+08-decision.md
+doctor.md
 sample-note.md
 ```
 
@@ -37,8 +38,8 @@ Inspect the proof:
 
 ```bash
 sed -n '1,120p' "$PCR_DEMO/04-packet.md"
-sed -n '1,120p' "$PCR_DEMO/04-diagnostics.md"
-sed -n '1,80p' "$PCR_DEMO/06-writeback.md"
+sed -n '1,120p' "$PCR_DEMO/05-diagnostics.md"
+sed -n '1,80p' "$PCR_DEMO/07-writeback.md"
 ```
 
 Timestamps and digests will differ on your machine.
@@ -101,7 +102,7 @@ Approval: approve-all
 - Packets must stay scoped to one agent and one task.
 ```
 
-## Diagnostics Excerpt: `04-diagnostics.md`
+## Diagnostics Excerpt: `05-diagnostics.md`
 
 ```markdown
 # Packet Diagnostics
@@ -120,7 +121,7 @@ Approval: approve-all
 | agent is scoped | PASS | agent is scoped |
 | task is scoped | PASS | task is scoped |
 | approved_digest is present and formatted | PASS | approved_digest is a 16-character lowercase hex digest |
-| no [REDACTED] marker leaked | PASS | [REDACTED] marker not found |
+| no redaction marker leaked | PASS | redaction marker not found |
 | approved context is not empty | PASS | approved context has content |
 | body scope matches frontmatter | PASS | body Agent and Task lines match frontmatter |
 ```
@@ -128,7 +129,7 @@ Approval: approve-all
 See a compact curated example at
 [examples/diagnostics-report.md](../examples/diagnostics-report.md).
 
-## Writeback Excerpt: `06-writeback.md`
+## Writeback Excerpt: `07-writeback.md`
 
 ```markdown
 # Writeback
@@ -138,7 +139,7 @@ Note: Synthetic sample packet is enough for the demo task.
 Request digest: b5804bfcdc6775c0
 
 ## Audit Trail
-- Request reviewed: 05-request.md
+- Request reviewed: 06-request.md
 - Request digest recorded: b5804bfcdc6775c0
 - Decision captured without adding raw private context.
 ```

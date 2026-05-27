@@ -9,6 +9,7 @@ from . import __version__
 from .core import (
     ApprovalRequired,
     DiagnosticResult,
+    DoctorResult,
     InvalidPipelineInput,
     RouteResult,
     approve_signals,
@@ -16,6 +17,7 @@ from .core import (
     create_request,
     create_writeback,
     diagnose_packet,
+    doctor_workdir,
     extract_signals,
     redact_file,
     run_route,
@@ -32,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subcommands = parser.add_subparsers(
         dest="command",
-        metavar="{redact,extract,approve,packet,diagnose,request,writeback,route,run-sample}",
+        metavar="{redact,extract,approve,packet,diagnose,doctor,request,writeback,route,run-sample}",
         required=True,
     )
 
@@ -74,6 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
     diagnostics = subcommands.add_parser("diagnostics", help=argparse.SUPPRESS)
     _add_diagnose_arguments(diagnostics)
     _hide_subcommand(subcommands, "diagnostics")
+
+    doctor = subcommands.add_parser("doctor", help="Validate a generated PCR workdir.")
+    doctor.add_argument("workdir", metavar="WORKDIR")
+    doctor.add_argument("--out", metavar="REPORT")
+    doctor.add_argument("--json-out", metavar="JSON")
+    doctor.set_defaults(func=_cmd_doctor)
 
     request = subcommands.add_parser("request", help="Create an auditable context request from a packet.")
     request.add_argument("packet_input", metavar="PACKET_INPUT")
@@ -131,6 +139,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote {artifact.artifact.path}")
         print(f"Diagnostics: {'pass' if artifact.passed else 'fail'}")
         return 0 if artifact.passed else 1
+    elif isinstance(artifact, DoctorResult):
+        if artifact.artifact is None:
+            print(artifact.report_text, end="")
+        else:
+            print(f"Wrote {artifact.artifact.path}")
+            print(f"Doctor: {'pass' if artifact.passed else 'fail'}")
+        return 0 if artifact.passed else 1
     else:
         print(f"Wrote {artifact.path}")
     return 0
@@ -179,6 +194,10 @@ def _add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _cmd_diagnose(args: argparse.Namespace):
     return diagnose_packet(args.packet_input, args.out, args.json_out)
+
+
+def _cmd_doctor(args: argparse.Namespace):
+    return doctor_workdir(args.workdir, args.out, args.json_out)
 
 
 def _cmd_request(args: argparse.Namespace):

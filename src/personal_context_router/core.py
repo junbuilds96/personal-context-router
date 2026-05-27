@@ -70,6 +70,16 @@ class DiagnosticResult:
 
 
 @dataclass(frozen=True)
+class DoctorResult:
+    workdir: Path
+    passed: bool
+    checks: tuple[DiagnosticCheck, ...]
+    report_text: str
+    artifact: Artifact | None = None
+    json_artifact: Artifact | None = None
+
+
+@dataclass(frozen=True)
 class RouteResult:
     artifacts: tuple[Artifact, ...]
     diagnostics: DiagnosticResult
@@ -345,115 +355,8 @@ def diagnose_packet(
     output_path: str | Path,
     json_output_path: str | Path | None = None,
 ) -> DiagnosticResult:
-    packet = read_text(packet_input)
-    fields = parse_frontmatter(packet)
-
-    agent = fields.get("agent", "")
-    task = fields.get("task", "")
-    approved_digest = fields.get("approved_digest", "")
-    body = strip_frontmatter(packet)
-    scope_section = _markdown_section(packet, "Scope")
-    approved_context_section = _markdown_section(packet, "Approved Context")
-
-    checks = tuple(
-        [
-            DiagnosticCheck(
-                "frontmatter present",
-                bool(fields),
-                "frontmatter found" if fields else "frontmatter missing or malformed",
-            ),
-            DiagnosticCheck(
-                "artifact type is context_packet",
-                fields.get("type") == "context_packet",
-                _frontmatter_detail(fields, "type", "context_packet"),
-            ),
-            DiagnosticCheck(
-                "agent is scoped",
-                _is_scoped_agent(agent),
-                _scope_detail("agent", agent, min_length=2, max_length=80),
-            ),
-            DiagnosticCheck(
-                "task is scoped",
-                _is_scoped_task(task),
-                _task_scope_detail(task),
-            ),
-            DiagnosticCheck(
-                "approved_digest is present and formatted",
-                bool(SHORT_DIGEST_RE.fullmatch(approved_digest)),
-                _digest_detail(approved_digest),
-            ),
-            DiagnosticCheck(
-                "body digest matches frontmatter",
-                bool(approved_digest) and f"Approved source digest: {approved_digest}" in body,
-                (
-                    "body records the approved_digest"
-                    if approved_digest and f"Approved source digest: {approved_digest}" in body
-                    else "body is missing the approved source digest line"
-                ),
-            ),
-            DiagnosticCheck(
-                f"no {REDACTION_MARKER} marker leaked",
-                REDACTION_MARKER not in packet,
-                (
-                    f"{REDACTION_MARKER} marker not found"
-                    if REDACTION_MARKER not in packet
-                    else f"{REDACTION_MARKER} marker found"
-                ),
-            ),
-            DiagnosticCheck(
-                "context packet heading present",
-                _has_markdown_heading(packet, "Context Packet"),
-                (
-                    "# Context Packet heading found"
-                    if _has_markdown_heading(packet, "Context Packet")
-                    else "# Context Packet heading missing"
-                ),
-            ),
-            DiagnosticCheck(
-                "scope section present",
-                scope_section is not None,
-                "## Scope heading found" if scope_section is not None else "## Scope heading missing",
-            ),
-            DiagnosticCheck(
-                "scope section has guardrails",
-                bool(scope_section and _section_has_bullets(scope_section) and "approval" in scope_section.lower()),
-                (
-                    "scope section includes approval guardrails"
-                    if scope_section and _section_has_bullets(scope_section) and "approval" in scope_section.lower()
-                    else "scope section should include bullet guardrails and approval language"
-                ),
-            ),
-            DiagnosticCheck(
-                "approved context section present",
-                approved_context_section is not None,
-                (
-                    "## Approved Context heading found"
-                    if approved_context_section is not None
-                    else "## Approved Context heading missing"
-                ),
-            ),
-            DiagnosticCheck(
-                "approved context is not empty",
-                bool(approved_context_section and approved_context_section.strip()),
-                (
-                    "approved context has content"
-                    if approved_context_section and approved_context_section.strip()
-                    else "approved context section is empty"
-                ),
-            ),
-            DiagnosticCheck(
-                "body scope matches frontmatter",
-                bool(agent and task and f"Agent: {agent}" in body and f"Task: {task}" in body),
-                (
-                    "body Agent and Task lines match frontmatter"
-                    if agent and task and f"Agent: {agent}" in body and f"Task: {task}" in body
-                    else "body Agent and Task lines do not match frontmatter"
-                ),
-            ),
-        ]
-    )
+    packet, packet_digest, checks = _packet_diagnostic_checks(packet_input)
     passed = all(check.passed for check in checks)
-    packet_digest = sha256(packet.encode("utf-8")).hexdigest()[:16]
     text = _diagnostics_report_text(
         packet_name=Path(packet_input).name,
         packet_digest=packet_digest,
@@ -471,8 +374,26 @@ def diagnose_packet(
                 passed=passed,
                 checks=checks,
             ),
-        )
+    )
     return DiagnosticResult(artifact, passed, checks, json_artifact)
+
+
+def doctor_workdir(
+    workdir: str | Path,
+    output_path: str | Path | None = None,
+    json_output_path: str | Path | None = None,
+) -> DoctorResult:
+    root = Path(workdir)
+    checks = _doctor_checks(root)
+    passed = all(check.passed for check in checks)
+    report_text = _doctor_report_text(root, passed, checks)
+    artifact = write_text(output_path, report_text) if output_path is not None else None
+    json_artifact = (
+        write_text(json_output_path, _doctor_report_json_text(root, passed, checks))
+        if json_output_path is not None
+        else None
+    )
+    return DoctorResult(root, passed, checks, report_text, artifact, json_artifact)
 
 
 def create_request(packet_input: str | Path, output_path: str | Path) -> Artifact:
@@ -592,14 +513,19 @@ def run_sample(workdir: str | Path, sample_path: str | Path | None = None) -> li
             output_path=root / "04-packet.md",
         )
     )
-    artifacts.append(create_request(root / "04-packet.md", root / "05-request.md"))
+    diagnostics = diagnose_packet(root / "04-packet.md", root / "05-diagnostics.md")
+    artifacts.append(diagnostics.artifact)
+    if not diagnostics.passed:
+        return artifacts
+
+    artifacts.append(create_request(root / "04-packet.md", root / "06-request.md"))
     artifacts.append(
         create_writeback(
-            root / "05-request.md",
-            root / "06-writeback.md",
+            root / "06-request.md",
+            root / "07-writeback.md",
             status="sufficient",
             note="Synthetic sample packet is enough for the demo task.",
-            decision_out=root / "07-decision.md",
+            decision_out=root / "08-decision.md",
         )
     )
     return artifacts
@@ -822,6 +748,318 @@ def _diagnostics_report_json_text(
         "packet_filename": packet_name,
         "packet_digest": packet_digest,
         "overall": "pass" if passed else "fail",
+        "counts": {
+            "total": len(checks),
+            "passed": passed_count,
+            "failed": len(checks) - passed_count,
+        },
+        "checks": [
+            {
+                "name": check.name,
+                "result": "pass" if check.passed else "fail",
+                "detail": check.detail,
+            }
+            for check in checks
+        ],
+    }
+    return json.dumps(payload, indent=2) + "\n"
+
+
+def _packet_diagnostic_checks(packet_input: str | Path) -> tuple[str, str, tuple[DiagnosticCheck, ...]]:
+    packet = read_text(packet_input)
+    fields = parse_frontmatter(packet)
+
+    agent = fields.get("agent", "")
+    task = fields.get("task", "")
+    approved_digest = fields.get("approved_digest", "")
+    body = strip_frontmatter(packet)
+    scope_section = _markdown_section(packet, "Scope")
+    approved_context_section = _markdown_section(packet, "Approved Context")
+
+    checks = tuple(
+        [
+            DiagnosticCheck(
+                "frontmatter present",
+                bool(fields),
+                "frontmatter found" if fields else "frontmatter missing or malformed",
+            ),
+            DiagnosticCheck(
+                "artifact type is context_packet",
+                fields.get("type") == "context_packet",
+                _frontmatter_detail(fields, "type", "context_packet"),
+            ),
+            DiagnosticCheck(
+                "agent is scoped",
+                _is_scoped_agent(agent),
+                _scope_detail("agent", agent, min_length=2, max_length=80),
+            ),
+            DiagnosticCheck(
+                "task is scoped",
+                _is_scoped_task(task),
+                _task_scope_detail(task),
+            ),
+            DiagnosticCheck(
+                "approved_digest is present and formatted",
+                bool(SHORT_DIGEST_RE.fullmatch(approved_digest)),
+                _digest_detail(approved_digest),
+            ),
+            DiagnosticCheck(
+                "body digest matches frontmatter",
+                bool(approved_digest) and f"Approved source digest: {approved_digest}" in body,
+                (
+                    "body records the approved_digest"
+                    if approved_digest and f"Approved source digest: {approved_digest}" in body
+                    else "body is missing the approved source digest line"
+                ),
+            ),
+            DiagnosticCheck(
+                "no redaction marker leaked",
+                REDACTION_MARKER not in packet,
+                (
+                    "redaction marker not found"
+                    if REDACTION_MARKER not in packet
+                    else "redaction marker found"
+                ),
+            ),
+            DiagnosticCheck(
+                "context packet heading present",
+                _has_markdown_heading(packet, "Context Packet"),
+                (
+                    "# Context Packet heading found"
+                    if _has_markdown_heading(packet, "Context Packet")
+                    else "# Context Packet heading missing"
+                ),
+            ),
+            DiagnosticCheck(
+                "scope section present",
+                scope_section is not None,
+                "## Scope heading found" if scope_section is not None else "## Scope heading missing",
+            ),
+            DiagnosticCheck(
+                "scope section has guardrails",
+                bool(
+                    scope_section
+                    and _section_has_bullets(scope_section)
+                    and "approval" in scope_section.lower()
+                ),
+                (
+                    "scope section includes approval guardrails"
+                    if scope_section
+                    and _section_has_bullets(scope_section)
+                    and "approval" in scope_section.lower()
+                    else "scope section should include bullet guardrails and approval language"
+                ),
+            ),
+            DiagnosticCheck(
+                "approved context section present",
+                approved_context_section is not None,
+                (
+                    "## Approved Context heading found"
+                    if approved_context_section is not None
+                    else "## Approved Context heading missing"
+                ),
+            ),
+            DiagnosticCheck(
+                "approved context is not empty",
+                bool(approved_context_section and approved_context_section.strip()),
+                (
+                    "approved context has content"
+                    if approved_context_section and approved_context_section.strip()
+                    else "approved context section is empty"
+                ),
+            ),
+            DiagnosticCheck(
+                "body scope matches frontmatter",
+                bool(agent and task and f"Agent: {agent}" in body and f"Task: {task}" in body),
+                (
+                    "body Agent and Task lines match frontmatter"
+                    if agent and task and f"Agent: {agent}" in body and f"Task: {task}" in body
+                    else "body Agent and Task lines do not match frontmatter"
+                ),
+            ),
+        ]
+    )
+    return packet, sha256(packet.encode("utf-8")).hexdigest()[:16], checks
+
+
+DOCTOR_EXPECTED_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    ("01-redacted.md", "redacted_note"),
+    ("02-signals.md", "context_signals"),
+    ("03-approved.md", "approved_signals"),
+    ("04-packet.md", "context_packet"),
+    ("05-diagnostics.md", "packet_diagnostics"),
+    ("06-request.md", "context_request"),
+)
+
+DOCTOR_OPTIONAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    ("06-writeback.md", "writeback"),
+    ("07-writeback.md", "writeback"),
+    ("07-decision.md", "routing_decision"),
+    ("08-decision.md", "routing_decision"),
+)
+
+DOCTOR_HANDOFF_TYPES = {
+    "context_packet",
+    "packet_diagnostics",
+    "context_request",
+    "writeback",
+    "routing_decision",
+}
+
+DOCTOR_LONG_HEX_RE = re.compile(r"\b[a-fA-F0-9]{17,}\b")
+
+
+def _doctor_checks(root: Path) -> tuple[DiagnosticCheck, ...]:
+    checks: list[DiagnosticCheck] = [
+        DiagnosticCheck(
+            "workdir exists",
+            root.is_dir(),
+            "directory found" if root.is_dir() else "directory missing",
+        )
+    ]
+    if not root.is_dir():
+        return tuple(checks)
+
+    for name, expected_type in DOCTOR_EXPECTED_ARTIFACTS:
+        path = root / name
+        exists = path.is_file()
+        checks.append(
+            DiagnosticCheck(
+                f"artifact exists: {name}",
+                exists,
+                "found" if exists else "missing",
+            )
+        )
+        if exists:
+            fields = parse_frontmatter(read_text(path))
+            checks.append(
+                DiagnosticCheck(
+                    f"artifact type: {name}",
+                    fields.get("type") == expected_type,
+                    _frontmatter_detail(fields, "type", expected_type),
+                )
+            )
+
+    for name, expected_type in DOCTOR_OPTIONAL_ARTIFACTS:
+        path = root / name
+        if not path.is_file():
+            continue
+        fields = parse_frontmatter(read_text(path))
+        checks.append(
+            DiagnosticCheck(
+                f"artifact type: {name}",
+                fields.get("type") == expected_type,
+                _frontmatter_detail(fields, "type", expected_type),
+            )
+        )
+
+    packet_path = root / "04-packet.md"
+    if packet_path.is_file():
+        try:
+            _, _, packet_checks = _packet_diagnostic_checks(packet_path)
+            passed_count = sum(1 for check in packet_checks if check.passed)
+            checks.append(
+                DiagnosticCheck(
+                    "packet diagnostics pass",
+                    passed_count == len(packet_checks),
+                    f"{passed_count}/{len(packet_checks)} packet checks passed",
+                )
+            )
+        except OSError as exc:
+            checks.append(
+                DiagnosticCheck(
+                    "packet diagnostics pass",
+                    False,
+                    f"could not read 04-packet.md: {exc}",
+                )
+            )
+
+    handoff_paths = _doctor_handoff_paths(root)
+    if handoff_paths:
+        for path in handoff_paths:
+            leak_kinds = _doctor_leak_kinds(read_text(path))
+            checks.append(
+                DiagnosticCheck(
+                    f"handoff leak scan: {path.name}",
+                    not leak_kinds,
+                    (
+                        "no obvious leaks found"
+                        if not leak_kinds
+                        else f"found {', '.join(leak_kinds)}"
+                    ),
+                )
+            )
+    else:
+        checks.append(
+            DiagnosticCheck(
+                "handoff leak scan",
+                False,
+                "no generated handoff artifacts found",
+            )
+        )
+
+    return tuple(checks)
+
+
+def _doctor_handoff_paths(root: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for path in sorted(root.glob("*.md"), key=lambda item: item.name):
+        fields = parse_frontmatter(read_text(path))
+        artifact_type = fields.get("type", "")
+        if artifact_type in DOCTOR_HANDOFF_TYPES:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _doctor_leak_kinds(text: str) -> tuple[str, ...]:
+    kinds: list[str] = []
+    if EMAIL_RE.search(text):
+        kinds.append("email address")
+    if PHONEISH_RE.search(text):
+        kinds.append("phone-like value")
+    if DOCTOR_LONG_HEX_RE.search(text):
+        kinds.append("long hex string")
+    if SECRET_LINE_RE.search(text):
+        kinds.append("credential-looking assignment")
+    if REDACTION_MARKER in text:
+        kinds.append(f"{REDACTION_MARKER} marker")
+    return tuple(kinds)
+
+
+def _doctor_report_text(
+    root: Path,
+    passed: bool,
+    checks: tuple[DiagnosticCheck, ...],
+) -> str:
+    overall = "pass" if passed else "fail"
+    passed_count = sum(1 for check in checks if check.passed)
+    rows = "\n".join(
+        f"| {_escape_table_cell(check.name)} | {'PASS' if check.passed else 'FAIL'} | {_escape_table_cell(check.detail)} |"
+        for check in checks
+    )
+    return (
+        "# PCR Doctor Report\n\n"
+        f"**Overall:** {overall}\n\n"
+        f"**Workdir:** `{root}`  \n"
+        f"**Checks passed:** {passed_count}/{len(checks)}\n\n"
+        "## Checks\n\n"
+        "| Check | Result | Detail |\n"
+        "| --- | --- | --- |\n"
+        f"{rows}\n"
+    )
+
+
+def _doctor_report_json_text(
+    root: Path,
+    passed: bool,
+    checks: tuple[DiagnosticCheck, ...],
+) -> str:
+    passed_count = sum(1 for check in checks if check.passed)
+    payload = {
+        "schema": "pcr.doctor.v1",
+        "overall": "pass" if passed else "fail",
+        "workdir": str(root),
+        "workdir_basename": root.name,
         "counts": {
             "total": len(checks),
             "passed": passed_count,

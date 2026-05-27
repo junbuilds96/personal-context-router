@@ -16,9 +16,11 @@ from personal_context_router.core import (
     create_request,
     create_writeback,
     diagnose_packet,
+    doctor_workdir,
     extract_signals,
     redact_content,
     redact_file,
+    run_route,
     run_sample,
     serialize_context_packet_json,
 )
@@ -378,7 +380,7 @@ def test_diagnose_packet_fails_invalid_packet(tmp_path: Path):
     assert "| artifact type is context_packet | FAIL | expected type=context_packet; found context_signals |" in diagnostics.artifact.text
     assert "| task is scoped | FAIL | task is missing or empty |" in diagnostics.artifact.text
     assert "| approved_digest is present and formatted | FAIL | approved_digest is missing or empty |" in diagnostics.artifact.text
-    assert "| no [REDACTED] marker leaked | FAIL | [REDACTED] marker found |" in diagnostics.artifact.text
+    assert "| no redaction marker leaked | FAIL | redaction marker found |" in diagnostics.artifact.text
     assert "| approved context section present | FAIL | ## Approved Context heading missing |" in diagnostics.artifact.text
 
 
@@ -420,9 +422,9 @@ def test_diagnose_packet_writes_failing_json_diagnostics(tmp_path: Path):
         "detail": "expected type=context_packet; found context_signals",
     } in data["checks"]
     assert {
-        "name": "no [REDACTED] marker leaked",
+        "name": "no redaction marker leaked",
         "result": "fail",
-        "detail": "[REDACTED] marker found",
+        "detail": "redaction marker found",
     } in data["checks"]
 
 
@@ -464,19 +466,92 @@ def test_run_sample_creates_complete_demo(tmp_path: Path):
         "02-signals.md",
         "03-approved.md",
         "04-packet.md",
-        "05-request.md",
-        "06-writeback.md",
+        "05-diagnostics.md",
+        "06-request.md",
+        "07-writeback.md",
     ]
-    assert (tmp_path / "07-decision.md").exists()
+    assert (tmp_path / "08-decision.md").exists()
     packet = (tmp_path / "04-packet.md").read_text(encoding="utf-8")
     assert "type: context_packet" in packet
     assert "[REDACTED]" not in packet
     assert "- Safety constraints:" not in packet
     assert "- Agent needs:" not in packet
-    for name in ("02-signals.md", "03-approved.md", "04-packet.md"):
+    for name in ("02-signals.md", "03-approved.md", "04-packet.md", "05-diagnostics.md"):
         generated = (tmp_path / name).read_text(encoding="utf-8")
         assert "\n        #" not in generated
         assert "\n        -" not in generated
+
+
+def test_doctor_workdir_passes_run_sample_workdir(tmp_path: Path):
+    run_sample(tmp_path)
+
+    result = doctor_workdir(tmp_path)
+
+    assert result.passed is True
+    assert result.artifact is None
+    assert "**Overall:** pass" in result.report_text
+    assert "| artifact exists: 05-diagnostics.md | PASS | found |" in result.report_text
+    assert "| artifact type: 08-decision.md | PASS | type=routing_decision |" in result.report_text
+    assert "| packet diagnostics pass | PASS | 13/13 packet checks passed |" in result.report_text
+    assert "| handoff leak scan: 04-packet.md | PASS | no obvious leaks found |" in result.report_text
+
+
+def test_doctor_workdir_passes_route_workdir_and_writes_json(tmp_path: Path):
+    note = tmp_path / "note.md"
+    workdir = tmp_path / "route"
+    json_report = tmp_path / "doctor.json"
+    note.write_text(
+        "\n".join(
+            [
+                "Goal: build the route command.",
+                "docs-agent needs a concise CLI example.",
+                "Contact: route-demo@example.test",
+                "api_key = fake-value",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    route = run_route(
+        note,
+        source="unit-route-note",
+        agent="docs-agent",
+        task="draft route command docs",
+        workdir=workdir,
+        approve_all=True,
+    )
+    assert route.diagnostics.passed is True
+
+    result = doctor_workdir(workdir, json_output_path=json_report)
+
+    assert result.passed is True
+    assert result.json_artifact is not None
+    data = json.loads(json_report.read_text(encoding="utf-8"))
+    assert data["schema"] == "pcr.doctor.v1"
+    assert data["overall"] == "pass"
+    assert data["workdir"] == str(workdir)
+    assert data["workdir_basename"] == "route"
+    assert data["counts"]["failed"] == 0
+    assert {
+        "name": "artifact type: 06-request.md",
+        "result": "pass",
+        "detail": "type=context_request",
+    } in data["checks"]
+
+
+def test_doctor_workdir_fails_missing_artifact_and_handoff_leak(tmp_path: Path):
+    run_sample(tmp_path)
+    (tmp_path / "06-request.md").unlink()
+    packet = tmp_path / "04-packet.md"
+    packet.write_text(
+        packet.read_text(encoding="utf-8") + "\nContact: leaked@example.test\n",
+        encoding="utf-8",
+    )
+
+    result = doctor_workdir(tmp_path)
+
+    assert result.passed is False
+    assert "| artifact exists: 06-request.md | FAIL | missing |" in result.report_text
+    assert "| handoff leak scan: 04-packet.md | FAIL | found email address |" in result.report_text
 
 
 def test_cli_approve_gate_fails_nonzero(tmp_path: Path):
@@ -716,6 +791,69 @@ def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
     assert json.loads(json_report.read_text(encoding="utf-8"))["overall"] == "fail"
 
 
+def test_cli_doctor_fails_nonzero_and_writes_reports(tmp_path: Path):
+    run_sample(tmp_path)
+    (tmp_path / "05-diagnostics.md").unlink()
+    report = tmp_path / "doctor.md"
+    json_report = tmp_path / "doctor.json"
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "doctor",
+            str(tmp_path),
+            "--out",
+            str(report),
+            "--json-out",
+            str(json_report),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    assert f"Wrote {report}" in result.stdout
+    assert "Doctor: fail" in result.stdout
+    assert report.exists()
+    assert "| artifact exists: 05-diagnostics.md | FAIL | missing |" in report.read_text(
+        encoding="utf-8"
+    )
+    assert json.loads(json_report.read_text(encoding="utf-8"))["overall"] == "fail"
+
+
+def test_cli_doctor_prints_report_to_stdout(tmp_path: Path):
+    run_sample(tmp_path)
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "doctor",
+            str(tmp_path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.startswith("# PCR Doctor Report\n")
+    assert "**Overall:** pass" in result.stdout
+    assert "Doctor: pass" not in result.stdout
+
+
 def test_cli_route_success_writes_pipeline_artifacts_and_json(tmp_path: Path):
     note = tmp_path / "note.md"
     workdir = tmp_path / "route"
@@ -838,7 +976,7 @@ def test_cli_route_diagnostics_failure_does_not_write_request(tmp_path: Path):
     diagnostics = (workdir / "05-diagnostics.md").read_text(encoding="utf-8")
     assert "[REDACTED]" in packet
     assert "overall: fail" in diagnostics
-    assert "| no [REDACTED] marker leaked | FAIL | [REDACTED] marker found |" in diagnostics
+    assert "| no redaction marker leaked | FAIL | redaction marker found |" in diagnostics
     assert not (workdir / "06-request.md").exists()
 
 
@@ -947,12 +1085,15 @@ def test_cli_help_lists_diagnose_not_legacy_aliases():
     )
 
     assert result.returncode == 0
-    assert "{redact,extract,approve,packet,diagnose,request,writeback,route,run-sample}" in result.stdout
+    assert "{redact,extract,approve,packet,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
     assert "diagnose" in result.stdout
+    assert "doctor" in result.stdout
     assert "Validate a context packet and write diagnostics." in result.stdout
+    assert "Validate a generated PCR workdir." in result.stdout
     assert "{redact,extract,approve,packet,inspect,request,writeback,run-sample}" not in result.stdout
     assert "{redact,extract,approve,packet,diagnostics,request,writeback,run-sample}" not in result.stdout
     assert "diagnose          " in result.stdout
+    assert "doctor           " in result.stdout
     assert "inspect           " not in result.stdout
     assert "diagnostics        " not in result.stdout
 
@@ -977,7 +1118,7 @@ def test_package_module_help_matches_cli_entrypoint():
 
     assert result.returncode == 0
     assert "usage: pcr" in result.stdout
-    assert "{redact,extract,approve,packet,diagnose,request,writeback,route,run-sample}" in result.stdout
+    assert "{redact,extract,approve,packet,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
     assert "Personal context, routed safely." in result.stdout
 
 
