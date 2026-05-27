@@ -104,6 +104,7 @@ pcr redact examples/sample-note.md --out "$PCR_DEMO/01-redacted.md"
 pcr extract "$PCR_DEMO/01-redacted.md" --source synthetic-sample-note --out "$PCR_DEMO/02-signals.md"
 pcr approve "$PCR_DEMO/02-signals.md" --approve-all --out "$PCR_DEMO/03-approved.md"
 pcr packet "$PCR_DEMO/03-approved.md" --agent docs-agent --task "draft a README quickstart" --out "$PCR_DEMO/04-packet.md" --json-out "$PCR_DEMO/04-packet.json"
+pcr stats "$PCR_DEMO/04-packet.md"
 pcr diagnose "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/05-diagnostics.md"
 pcr request "$PCR_DEMO/04-packet.md" --out "$PCR_DEMO/06-request.md"
 pcr writeback "$PCR_DEMO/06-request.md" --out "$PCR_DEMO/07-writeback.md" --status sufficient --note "Packet contained enough synthetic context." --decision-out "$PCR_DEMO/08-decision.md"
@@ -142,6 +143,7 @@ safety policy.
 - `pcr extract REDACTED_INPUT --source SOURCE --out SIGNALS_OUTPUT`
 - `pcr approve SIGNALS_INPUT (--approve-all|--select INDEXES|--reject INDEXES) --out APPROVED_OUTPUT`
 - `pcr packet APPROVED_INPUT --agent AGENT --task TASK --out PACKET_OUTPUT [--json-out JSON_OUTPUT]`
+- `pcr stats PACKET_INPUT [--json]`
 - `pcr diagnose PACKET_INPUT --out DIAGNOSTICS_OUTPUT [--json-out JSON_OUTPUT]`
 - `pcr doctor WORKDIR [--out REPORT] [--json-out JSON]`
 - `pcr request PACKET_INPUT --out REQUEST_OUTPUT`

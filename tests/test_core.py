@@ -10,6 +10,7 @@ import pytest
 from personal_context_router import __version__
 from personal_context_router.core import (
     ApprovalRequired,
+    InvalidPipelineInput,
     REDACTION_MARKER,
     approve_signals,
     create_packet,
@@ -18,6 +19,9 @@ from personal_context_router.core import (
     diagnose_packet,
     doctor_workdir,
     extract_signals,
+    packet_stats,
+    packet_stats_json_text,
+    packet_stats_text,
     redact_content,
     redact_file,
     run_route,
@@ -428,6 +432,64 @@ def test_diagnose_packet_writes_failing_json_diagnostics(tmp_path: Path):
     } in data["checks"]
 
 
+def test_packet_stats_summarizes_packet_without_raw_context(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    raw_context = "Keep this uniquely sensitive approved signal."
+    signals.write_text(
+        f"---\ntype: context_signals\n---\n\n# Context Signals\n\n- {raw_context}\n",
+        encoding="utf-8",
+    )
+    approved = approve_signals(
+        signals,
+        tmp_path / "approved.md",
+        approve_all=False,
+        select="1",
+    )
+    packet = create_packet(
+        approved.path,
+        agent="qa-agent",
+        task="verify packet stats summary",
+        output_path=tmp_path / "packet.md",
+    )
+
+    stats = packet_stats(packet.path)
+    text = packet_stats_text(stats)
+    json_text = packet_stats_json_text(stats)
+    data = json.loads(json_text)
+
+    assert stats.packet_filename == "packet.md"
+    assert stats.packet_digest == sha256(packet.text.encode("utf-8")).hexdigest()[:16]
+    assert stats.agent == "qa-agent"
+    assert stats.task == "verify packet stats summary"
+    assert stats.total_characters == len(packet.text)
+    assert stats.approved_context_characters == len(
+        packet.text.split("## Approved Context", 1)[1].strip()
+    )
+    assert stats.approximate_tokens == (len(packet.text) + 3) // 4
+    assert stats.diagnostic_passed is True
+    assert stats.diagnostic_total == 13
+    assert stats.diagnostic_failed_count == 0
+    assert raw_context not in text
+    assert raw_context not in json_text
+    assert data["schema"] == "pcr.packet_stats.v1"
+    assert data["characters"] == {
+        "total": len(packet.text),
+        "approved_context": stats.approved_context_characters,
+    }
+    assert data["diagnostics"]["counts"] == {"total": 13, "passed": 13, "failed": 0}
+
+
+def test_packet_stats_rejects_non_packet_input(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    signals.write_text(
+        "---\ntype: context_signals\n---\n\n# Context Signals\n\n- Not a packet.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidPipelineInput, match="requires a context packet"):
+        packet_stats(signals)
+
+
 def test_extract_signals_skips_redacted_lines_and_section_labels(tmp_path: Path):
     redacted = tmp_path / "redacted.md"
     redacted.write_text(
@@ -752,6 +814,139 @@ def test_cli_packet_json_invalid_input_writes_no_outputs(tmp_path: Path):
     assert "requires an approved signals artifact" in result.stderr
     assert not packet.exists()
     assert not json_packet.exists()
+
+
+def test_cli_stats_prints_safe_text_summary(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    raw_context = "Keep this private implementation detail out of stats output."
+    signals.write_text(
+        f"---\ntype: context_signals\n---\n\n# Context Signals\n\n- {raw_context}\n",
+        encoding="utf-8",
+    )
+    approved = approve_signals(
+        signals,
+        tmp_path / "approved.md",
+        approve_all=False,
+        select="1",
+    )
+    packet = create_packet(
+        approved.path,
+        agent="qa-agent",
+        task="verify stats command output",
+        output_path=tmp_path / "packet.md",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "stats",
+            str(packet.path),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.startswith("Packet stats\n")
+    assert "Packet: packet.md\n" in result.stdout
+    assert "Digest:" in result.stdout
+    assert "Agent: qa-agent\n" in result.stdout
+    assert "Task: verify stats command output\n" in result.stdout
+    assert "Characters:" in result.stdout
+    assert "Approx tokens:" in result.stdout
+    assert "Diagnostics: pass (13/13 passed, 0 failed)\n" in result.stdout
+    assert raw_context not in result.stdout
+
+
+def test_cli_stats_prints_safe_json_only(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    raw_context = "Keep this hidden from JSON stats."
+    signals.write_text(
+        f"---\ntype: context_signals\n---\n\n# Context Signals\n\n- {raw_context}\n",
+        encoding="utf-8",
+    )
+    approved = approve_signals(
+        signals,
+        tmp_path / "approved.md",
+        approve_all=False,
+        select="1",
+    )
+    packet = create_packet(
+        approved.path,
+        agent="qa-agent",
+        task="verify stats JSON output",
+        output_path=tmp_path / "packet.md",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "stats",
+            str(packet.path),
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    data = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert data["schema"] == "pcr.packet_stats.v1"
+    assert data["packet_filename"] == "packet.md"
+    assert data["packet_digest"] == sha256(packet.text.encode("utf-8")).hexdigest()[:16]
+    assert data["agent"] == "qa-agent"
+    assert data["task"] == "verify stats JSON output"
+    assert data["characters"]["total"] == len(packet.text)
+    assert data["approximate_tokens"] == (len(packet.text) + 3) // 4
+    assert data["diagnostics"]["overall"] == "pass"
+    assert data["diagnostics"]["counts"] == {"total": 13, "passed": 13, "failed": 0}
+    assert raw_context not in result.stdout
+
+
+def test_cli_stats_rejects_non_packet_input(tmp_path: Path):
+    signals = tmp_path / "signals.md"
+    signals.write_text(
+        "---\ntype: context_signals\n---\n\n# Context Signals\n\n- Not a packet.\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "personal_context_router.cli",
+            "stats",
+            str(signals),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.startswith("pcr: error:")
+    assert "Packet stats requires a context packet." in result.stderr
 
 
 def test_cli_diagnose_fails_nonzero_and_writes_report(tmp_path: Path):
@@ -1085,14 +1280,16 @@ def test_cli_help_lists_diagnose_not_legacy_aliases():
     )
 
     assert result.returncode == 0
-    assert "{redact,extract,approve,packet,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
+    assert "{redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
     assert "diagnose" in result.stdout
     assert "doctor" in result.stdout
+    assert "Print a safe context packet size and shape summary." in result.stdout
     assert "Validate a context packet and write diagnostics." in result.stdout
     assert "Validate a generated PCR workdir." in result.stdout
     assert "{redact,extract,approve,packet,inspect,request,writeback,run-sample}" not in result.stdout
     assert "{redact,extract,approve,packet,diagnostics,request,writeback,run-sample}" not in result.stdout
     assert "diagnose          " in result.stdout
+    assert "stats             " in result.stdout
     assert "doctor           " in result.stdout
     assert "inspect           " not in result.stdout
     assert "diagnostics        " not in result.stdout
@@ -1118,7 +1315,7 @@ def test_package_module_help_matches_cli_entrypoint():
 
     assert result.returncode == 0
     assert "usage: pcr" in result.stdout
-    assert "{redact,extract,approve,packet,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
+    assert "{redact,extract,approve,packet,stats,diagnose,doctor,request,writeback,route,run-sample}" in result.stdout
     assert "Personal context, routed safely." in result.stdout
 
 

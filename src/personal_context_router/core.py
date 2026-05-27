@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+from math import ceil
 from pathlib import Path
 import re
 from textwrap import dedent
@@ -83,6 +84,21 @@ class DoctorResult:
 class RouteResult:
     artifacts: tuple[Artifact, ...]
     diagnostics: DiagnosticResult
+
+
+@dataclass(frozen=True)
+class PacketStats:
+    packet_filename: str
+    packet_digest: str
+    agent: str
+    task: str
+    total_characters: int
+    approved_context_characters: int
+    approximate_tokens: int
+    diagnostic_passed: bool
+    diagnostic_total: int
+    diagnostic_passed_count: int
+    diagnostic_failed_count: int
 
 
 def utc_now() -> str:
@@ -376,6 +392,71 @@ def diagnose_packet(
             ),
     )
     return DiagnosticResult(artifact, passed, checks, json_artifact)
+
+
+def packet_stats(packet_input: str | Path) -> PacketStats:
+    packet, packet_digest, checks = _packet_diagnostic_checks(packet_input)
+    fields = parse_frontmatter(packet)
+    if fields.get("type") != "context_packet":
+        raise InvalidPipelineInput("Packet stats requires a context packet.")
+
+    approved_context = _markdown_section(packet, "Approved Context")
+    if approved_context is None:
+        raise InvalidPipelineInput("Packet stats requires an Approved Context section.")
+
+    passed_count = sum(1 for check in checks if check.passed)
+    total_characters = len(packet)
+    return PacketStats(
+        packet_filename=Path(packet_input).name,
+        packet_digest=packet_digest,
+        agent=fields.get("agent", ""),
+        task=fields.get("task", ""),
+        total_characters=total_characters,
+        approved_context_characters=len(approved_context),
+        approximate_tokens=ceil(total_characters / 4),
+        diagnostic_passed=passed_count == len(checks),
+        diagnostic_total=len(checks),
+        diagnostic_passed_count=passed_count,
+        diagnostic_failed_count=len(checks) - passed_count,
+    )
+
+
+def packet_stats_text(stats: PacketStats) -> str:
+    overall = "pass" if stats.diagnostic_passed else "fail"
+    return (
+        "Packet stats\n"
+        f"Packet: {stats.packet_filename}\n"
+        f"Digest: {stats.packet_digest}\n"
+        f"Agent: {stats.agent}\n"
+        f"Task: {stats.task}\n"
+        f"Characters: {stats.total_characters} total, {stats.approved_context_characters} approved_context\n"
+        f"Approx tokens: {stats.approximate_tokens}\n"
+        f"Diagnostics: {overall} ({stats.diagnostic_passed_count}/{stats.diagnostic_total} passed, {stats.diagnostic_failed_count} failed)\n"
+    )
+
+
+def packet_stats_json_text(stats: PacketStats) -> str:
+    payload = {
+        "schema": "pcr.packet_stats.v1",
+        "packet_filename": stats.packet_filename,
+        "packet_digest": stats.packet_digest,
+        "agent": stats.agent,
+        "task": stats.task,
+        "characters": {
+            "total": stats.total_characters,
+            "approved_context": stats.approved_context_characters,
+        },
+        "approximate_tokens": stats.approximate_tokens,
+        "diagnostics": {
+            "overall": "pass" if stats.diagnostic_passed else "fail",
+            "counts": {
+                "total": stats.diagnostic_total,
+                "passed": stats.diagnostic_passed_count,
+                "failed": stats.diagnostic_failed_count,
+            },
+        },
+    }
+    return json.dumps(payload, indent=2) + "\n"
 
 
 def doctor_workdir(
